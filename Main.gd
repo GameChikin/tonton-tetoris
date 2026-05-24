@@ -7,7 +7,7 @@ extends Node2D
 var board: Board
 var effect_manager: EffectManager
 var active_tetromino: Tetromino
-var is_tonton_in_progress: bool = false
+var _is_busy: bool = false
 
 
 func _ready() -> void:
@@ -16,15 +16,10 @@ func _ready() -> void:
 	_spawn_tetromino()
 
 
-func _process(_delta: float) -> void:
-	if active_tetromino == null or not is_instance_valid(active_tetromino):
-		_spawn_tetromino()
-
-
 func _input(event: InputEvent) -> void:
 	if not event.is_action_pressed("tonton"):
 		return
-	if is_tonton_in_progress:
+	if _is_busy:
 		return
 	await _run_tonton()
 
@@ -33,31 +28,51 @@ func _spawn_tetromino() -> void:
 	if tetromino_scene == null:
 		push_warning("Main: tetromino_scene is not assigned.")
 		return
+	if _is_busy:
+		return
 	if active_tetromino != null and is_instance_valid(active_tetromino):
 		return
 
 	var instance: Tetromino = tetromino_scene.instantiate() as Tetromino
+	if instance == null:
+		push_warning("Main: failed to instantiate Tetromino.")
+		return
+
+	if not instance.locked_to_board.is_connected(_on_active_tetromino_locked):
+		instance.locked_to_board.connect(_on_active_tetromino_locked)
+
 	add_child(instance)
 	active_tetromino = instance
 
 
+func _on_active_tetromino_locked() -> void:
+	active_tetromino = null
+	_is_busy = true
+
+	if board != null and is_instance_valid(board):
+		await board.resolve_lines()
+
+	_is_busy = false
+	_spawn_tetromino()
+
+
 func _run_tonton() -> void:
-	if is_tonton_in_progress:
+	if _is_busy:
 		return
 
-	is_tonton_in_progress = true
+	_is_busy = true
 
 	if active_tetromino != null and is_instance_valid(active_tetromino):
 		active_tetromino.pause_input()
 
-	if effect_manager != null:
+	if effect_manager != null and is_instance_valid(effect_manager):
 		await effect_manager.shake_camera()
 
-	if board != null:
-		board.apply_tonton_drop()
+	if board != null and is_instance_valid(board):
+		await board.apply_tonton_drop()
 		await board.resolve_lines()
 
 	if active_tetromino != null and is_instance_valid(active_tetromino):
 		active_tetromino.resume_input()
 
-	is_tonton_in_progress = false
+	_is_busy = false

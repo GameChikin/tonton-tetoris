@@ -14,6 +14,19 @@ position = Vector2(160, 320)
 
 [node name="Board" type="Node2D" parent="." unique_id=1510623832]
 script = ExtResource("2_f63ok")
+tonton_drop_distance = 3
+
+[node name="BoardBackground" type="ColorRect" parent="Board" unique_id=471495757]
+offset_right = 320.0
+offset_bottom = 640.0
+color = Color(0.24115604, 0.24115604, 0.24115604, 1)
+
+[node name="BoardBorder" type="ReferenceRect" parent="Board" unique_id=2066582903]
+offset_right = 320.0
+offset_bottom = 640.0
+border_color = Color(1, 1, 1, 1)
+border_width = 2.1
+editor_only = false
 
 [node name="EffectManager" type="Node" parent="." unique_id=232364583]
 script = ExtResource("3_pv0mk")

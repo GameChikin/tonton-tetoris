@@ -1,0 +1,81 @@
+# ==========================================
+# gitingest ignore rules for Godot 4.6.3
+# Purpose: keep only code and scene structure
+# ==========================================
+
+# Godot internal cache / generated data
+.godot/
+.import/
+
+# Export / build artifacts
+build/
+Build/
+exports/
+export/
+dist/
+bin/
+out/
+tmp/
+temp/
+
+# Logs / crash dumps / temporary files
+*.log
+*.tmp
+*.temp
+*.cache
+*.crash
+
+# Images (binary)
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.webp
+*.bmp
+*.tga
+*.gif
+*.exr
+*.hdr
+
+# Audio (binary)
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.m4a
+
+# Fonts (binary)
+*.ttf
+*.otf
+*.woff
+*.woff2
+
+# 3D models / related binaries
+*.glb
+*.gltf
+*.obj
+*.fbx
+*.dae
+*.blend
+*.stl
+
+# Archives / package binaries
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+
+# Misc binary data often used in games
+*.res
+*.mesh
+*.ctex
+*.stex
+*.mp4
+*.avi
+*.mov
+
+# Keep source assets included by default:
+# - *.gd
+# - *.tscn
+# - project.godot

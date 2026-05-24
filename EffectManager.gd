@@ -22,7 +22,7 @@ func _ready() -> void:
 
 
 func shake_camera() -> void:
-	if camera == null:
+	if camera == null or not is_instance_valid(camera):
 		shake_finished.emit()
 		return
 
@@ -50,16 +50,29 @@ func shake_camera() -> void:
 func enqueue_line_clear(block_node: Node) -> void:
 	if block_node == null:
 		return
+	if not is_instance_valid(block_node):
+		return
 	_line_clear_queue.append(block_node)
 
 
 func flush_line_clear_queue() -> void:
 	while not _line_clear_queue.is_empty():
 		var block_node: Node = _line_clear_queue.pop_front()
+		if not is_instance_valid(block_node):
+			continue
 		await play_line_clear_effect(block_node)
 
 
 func play_line_clear_effect(block_node: Node) -> void:
+	# Board passes disposable effect-only dummy nodes.
+	if not is_instance_valid(block_node):
+		return
+
+	if not (block_node is CanvasItem):
+		if is_instance_valid(block_node):
+			block_node.queue_free()
+		return
+
 	if not is_instance_valid(block_node):
 		return
 
@@ -67,5 +80,7 @@ func play_line_clear_effect(block_node: Node) -> void:
 	tween.tween_property(block_node, "modulate:a", 0.0, 0.08)
 	await tween.finished
 
-	if is_instance_valid(block_node):
-		block_node.queue_free()
+	if not is_instance_valid(block_node):
+		return
+
+	block_node.queue_free()

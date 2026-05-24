@@ -1,5 +1,6 @@
 extends Node2D
 class_name Tetromino
+signal locked_to_board
 
 const TETROMINO_DATA := {
 	"I": {
@@ -180,7 +181,7 @@ func _try_rotate() -> void:
 
 
 func _can_place(target_pivot: Vector2i, target_cells: Array[Vector2i]) -> bool:
-	if board == null:
+	if board == null or not is_instance_valid(board):
 		return false
 
 	for rel in target_cells:
@@ -193,13 +194,16 @@ func _can_place(target_pivot: Vector2i, target_cells: Array[Vector2i]) -> bool:
 
 
 func _sync_block_positions() -> void:
-	if board == null:
+	if board == null or not is_instance_valid(board):
 		return
 
 	for i in range(min(blocks.size(), local_cells.size())):
+		var block: Node = blocks[i]
+		if not is_instance_valid(block):
+			continue
 		var absolute := pivot + local_cells[i]
 		var pixel := board.grid_to_pixel(absolute.x, absolute.y)
-		_set_block_position(blocks[i], pixel)
+		_set_block_position(block, pixel)
 
 
 func _get_absolute_cells() -> Array[Vector2i]:
@@ -212,18 +216,43 @@ func _get_absolute_cells() -> Array[Vector2i]:
 func _lock_to_board() -> void:
 	if _is_locked:
 		return
-	_is_locked = true
-	set_process(false)
 
-	if board != null:
-		for block in blocks:
-			if is_instance_valid(block):
-				block.reparent(board)
-		board.lock_blocks(blocks, _get_absolute_cells())
-	queue_free()
+	_is_locked = true
+	_is_input_paused = true
+
+	if board == null or not is_instance_valid(board):
+		set_process(false)
+		if is_instance_valid(self):
+			queue_free()
+		return
+
+	var absolute_cells: Array[Vector2i] = _get_absolute_cells()
+	var locked_blocks: Array[Node] = []
+	var locked_cells: Array[Vector2i] = []
+
+	for i in range(min(blocks.size(), absolute_cells.size())):
+		var block: Node = blocks[i]
+		if not is_instance_valid(block):
+			continue
+
+		if block.get_parent() != board:
+			block.reparent(board)
+
+		locked_blocks.append(block)
+		locked_cells.append(absolute_cells[i])
+
+	board.lock_blocks(locked_blocks, locked_cells)
+	locked_to_board.emit()
+
+	set_process(false)
+	if is_instance_valid(self):
+		queue_free()
 
 
 func _set_block_position(block: Node, pixel: Vector2) -> void:
+	if not is_instance_valid(block):
+		return
+
 	if block is Node2D:
 		(block as Node2D).position = pixel
 	elif block is Control:
