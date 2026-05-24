@@ -4,6 +4,9 @@
 [ext_resource type="Script" uid="uid://dpo10h5w1ca1i" path="res://Board.gd" id="2_f63ok"]
 [ext_resource type="Script" uid="uid://bow35rut1edcr" path="res://EffectManager.gd" id="3_pv0mk"]
 [ext_resource type="PackedScene" path="res://Tetromino.tscn" id="4_hum6p"]
+[ext_resource type="Script" uid="uid://dpoehjdknbpis" path="res://BoardPresetManager.gd" id="5_qx0w2"]
+[ext_resource type="Script" uid="uid://dq60hjaa7q5s7" path="res://ScoreManager.gd" id="6_3dxm6"]
+[ext_resource type="PackedScene" uid="uid://lv3tdjpxiehe" path="res://score_popup.tscn" id="7_lgr22"]
 
 [node name="Main" type="Node2D" unique_id=1283422931]
 script = ExtResource("1_1m0qt")
@@ -14,7 +17,7 @@ position = Vector2(160, 320)
 
 [node name="Board" type="Node2D" parent="." unique_id=1510623832]
 script = ExtResource("2_f63ok")
-tonton_drop_distance = 3
+current_rule = 1
 
 [node name="BoardBackground" type="ColorRect" parent="Board" unique_id=471495757]
 offset_right = 320.0
@@ -28,7 +31,58 @@ border_color = Color(1, 1, 1, 1)
 border_width = 2.1
 editor_only = false
 
+[node name="DebugLayer" type="CanvasLayer" parent="." unique_id=615930154]
+script = ExtResource("5_qx0w2")
+
+[node name="PanelContainer" type="PanelContainer" parent="DebugLayer" unique_id=2010289016]
+offset_left = 8.0
+offset_top = 16.0
+offset_right = 228.0
+offset_bottom = 360.0
+
+[node name="MarginContainer" type="MarginContainer" parent="DebugLayer/PanelContainer" unique_id=339390527]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="DebugLayer/PanelContainer/MarginContainer" unique_id=807676058]
+layout_mode = 2
+
 [node name="EffectManager" type="Node" parent="." unique_id=232364583]
 script = ExtResource("3_pv0mk")
 shake_intensity = 20.0
 shake_duration = 0.25
+flash_rect_path = NodePath("../FlashLayer/FlashRect")
+
+[node name="FlashLayer" type="CanvasLayer" parent="." unique_id=1894259145]
+layer = 10
+
+[node name="FlashRect" type="ColorRect" parent="FlashLayer" unique_id=1121924159]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(1, 1, 1, 0.39215687)
+
+[node name="ScoreUI" type="CanvasLayer" parent="." unique_id=452029060]
+
+[node name="ScoreLabel" type="Label" parent="ScoreUI" unique_id=140365978]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -242.0
+offset_top = 10.0
+offset_right = -3.9050293
+offset_bottom = 76.0
+grow_horizontal = 0
+horizontal_alignment = 2
+metadata/_edit_use_anchors_ = true
+
+[node name="ScoreManager" type="Node" parent="." unique_id=1099065445]
+script = ExtResource("6_3dxm6")
+score_label_path = NodePath("../ScoreUI/ScoreLabel")
+popup_scene = ExtResource("7_lgr22")

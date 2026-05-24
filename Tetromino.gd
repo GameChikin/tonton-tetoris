@@ -129,6 +129,10 @@ func _spawn_blocks() -> void:
 		var block: Node = block_scene.instantiate()
 		add_child(block)
 		_apply_block_color(block, current_color)
+		
+		# --- 追加: 論理的な色ID（形状キー）をメタデータとして付与 ---
+		block.set_meta("color_id", current_shape_key)
+		
 		blocks.append(block)
 
 

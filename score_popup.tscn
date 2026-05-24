@@ -1,0 +1,13 @@
+[gd_scene format=3 uid="uid://lv3tdjpxiehe"]
+
+[sub_resource type="LabelSettings" id="LabelSettings_87b4p"]
+outline_size = 5
+outline_color = Color(0, 0, 0, 1)
+shadow_color = Color(0, 0, 0, 1)
+shadow_offset = Vector2(2.65, 1)
+
+[node name="ScorePopup" type="Label" unique_id=429992923]
+offset_right = 40.0
+offset_bottom = 23.0
+text = "+500"
+label_settings = SubResource("LabelSettings_87b4p")

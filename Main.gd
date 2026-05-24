@@ -76,3 +76,17 @@ func _run_tonton() -> void:
 		active_tetromino.resume_input()
 
 	_is_busy = false
+
+
+func load_preset_board(preset_matrix: Array) -> void:
+	if _is_busy:
+		return
+
+	if active_tetromino != null and is_instance_valid(active_tetromino):
+		active_tetromino.queue_free()
+		active_tetromino = null
+
+	if board != null and is_instance_valid(board):
+		board.force_set_grid_from_data(preset_matrix)
+
+	_spawn_tetromino()
