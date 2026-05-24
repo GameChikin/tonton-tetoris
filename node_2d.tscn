@@ -1,0 +1,7 @@
+[gd_scene format=3 uid="uid://2wjsgo2umx07"]
+
+[node name="Block" type="Node2D" unique_id=58270326]
+
+[node name="Block" type="ColorRect" parent="." unique_id=632560093]
+offset_right = 32.0
+offset_bottom = 32.0

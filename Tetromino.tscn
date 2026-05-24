@@ -1,0 +1,8 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://Tetromino.gd" id="1_m4h6v"]
+[ext_resource type="PackedScene" path="res://Block.tscn" id="2_x7q2n"]
+
+[node name="Tetromino" type="Node2D"]
+script = ExtResource("1_m4h6v")
+block_scene = ExtResource("2_x7q2n")

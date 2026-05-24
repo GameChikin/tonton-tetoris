@@ -1,0 +1,21 @@
+[gd_scene format=3 uid="uid://t4vk1edpplnh"]
+
+[ext_resource type="Script" uid="uid://4hghdd2pcb5j" path="res://Main.gd" id="1_1m0qt"]
+[ext_resource type="Script" uid="uid://dpo10h5w1ca1i" path="res://Board.gd" id="2_f63ok"]
+[ext_resource type="Script" uid="uid://bow35rut1edcr" path="res://EffectManager.gd" id="3_pv0mk"]
+[ext_resource type="PackedScene" path="res://Tetromino.tscn" id="4_hum6p"]
+
+[node name="Main" type="Node2D" unique_id=1283422931]
+script = ExtResource("1_1m0qt")
+tetromino_scene = ExtResource("4_hum6p")
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=1607763585]
+position = Vector2(160, 320)
+
+[node name="Board" type="Node2D" parent="." unique_id=1510623832]
+script = ExtResource("2_f63ok")
+
+[node name="EffectManager" type="Node" parent="." unique_id=232364583]
+script = ExtResource("3_pv0mk")
+shake_intensity = 20.0
+shake_duration = 0.25
