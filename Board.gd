@@ -180,16 +180,16 @@ func resolve_lines() -> void:
 	_is_resolving = true
 	resolve_started.emit()
 
-	# 連鎖（ぷよぷよ時）や連続消去を処理するためのメインループ
+	# 連続消去（テトリスでの全消しや、ぷよルールでの連鎖）を処理するためのメインループ
 	while true:
 		_resolve_requested = false
 		_sanitize_invalid_blocks()
 
 		var blocks_to_clear: Array[Node] = []
 		var lowest_y: int = -1
-		var match_count: int = 0 # スコア算出用の消去単位数（テトリスなら行数、ぷよぷよなら消える塊数など）
+		var match_count: int = 0
 
-		# 【判定フェーズ】現在のルールに応じて消去対象を切り替え
+		# 【判定フェーズ】現在のルールに応じて消去対象の検索のみを切り替え
 		if current_rule == GameRule.TETRIS:
 			var full_rows: Array[int] = _find_full_rows()
 			match_count = full_rows.size()
@@ -204,15 +204,13 @@ func resolve_lines() -> void:
 		else:
 			# ぷよぷよルール：同色4つ以上マッチ
 			var puyo_matches: Array[Node] = _find_puyo_matches()
-			match_count = 1 if not puyo_matches.is_empty() else 0 # 1連鎖分のフラグとして代入
+			match_count = 1 if not puyo_matches.is_empty() else 0
 			if not puyo_matches.is_empty():
 				for block in puyo_matches:
 					if block != null and is_instance_valid(block):
 						blocks_to_clear.append(block)
-						# ポップアップ用の最も低いY座標を算出
 						var b_pos := pixel_to_grid(block.position if "position" in block else Vector2.ZERO)
 						lowest_y = max(lowest_y, b_pos.y)
-						# グリッドデータ層からも即座に切り離す
 						if b_pos.y >= 0 and b_pos.y < HEIGHT and b_pos.x >= 0 and b_pos.x < WIDTH:
 							grid[b_pos.y][b_pos.x] = null
 
@@ -227,7 +225,7 @@ func resolve_lines() -> void:
 		if effect_manager != null and effect_manager.has_method("play_line_blink"):
 			await effect_manager.play_line_blink(blocks_to_clear)
 		
-		# 2. スコア加算とポップアップ（最も低い位置のパズル中央付近に表示）
+		# 2. スコア加算とポップアップ
 		if score_manager != null and score_manager.has_method("add_score_for_lines"):
 			var target_y = lowest_y if lowest_y != -1 else int(HEIGHT / 2.0)
 			var popup_pos := grid_to_pixel(int(WIDTH / 2.0), target_y)
@@ -242,37 +240,27 @@ func resolve_lines() -> void:
 			if is_instance_valid(block):
 				block.queue_free()
 
-		# 【重力フェーズ】現在のルールに応じて重力の処理を切り替え
+		# 【重力フェーズ】ルールに関わらず、常にテトリス型（形状・空洞維持の一括行シフト）を適用
 		_sanitize_invalid_blocks()
-		if current_rule == GameRule.TETRIS:
-			# テトリス：消えた行数分をカウントして、それより上をそのまま一括シフト
-			var full_rows: Array[int] = _find_full_rows()
-			# ※直前でgridからクリア済みのため_find_full_rowsは空を返す場合があるため、
-			# データ整合性のために blocks_to_clear があった場合は全行を走査して空行を詰める
-			var empty_rows: Array[int] = []
-			for y in range(HEIGHT):
-				var is_empty_row := true
-				for x in range(WIDTH):
-					if grid[y][x] != null:
-						is_empty_row = false
-						break
-				if is_empty_row:
-					# 上にブロックが1つでもある空行のみを対象とする
-					var has_block_above := false
-					for ay in range(0, y):
-						for ax in range(WIDTH):
-							if grid[ay][ax] != null:
-								has_block_above = true
-								break
-					if has_block_above:
-						empty_rows.append(y)
-			apply_tetris_gravity(empty_rows)
-		else:
-			# ぷよぷよ：空きスペースがなくなるまでバラバラに落とす重力を、落ち切るまでループ実行（連鎖の準備）
-			while apply_puyo_gravity():
-				_sanitize_invalid_blocks()
-				await get_tree().create_timer(0.05).timeout # 落下が視認できるようにごくわずかなディレイを入れる
 		
+		var empty_rows: Array[int] = []
+		for y in range(HEIGHT):
+			var is_empty_row := true
+			for x in range(WIDTH):
+				if grid[y][x] != null:
+					is_empty_row = false
+					break
+			if is_empty_row:
+				var has_block_above := false
+				for ay in range(0, y):
+					for ax in range(WIDTH):
+						if grid[ay][ax] != null:
+							has_block_above = true
+							break
+				if has_block_above:
+					empty_rows.append(y)
+					
+		apply_tetris_gravity(empty_rows)
 		_sanitize_invalid_blocks()
 
 	_is_resolving = false
@@ -285,6 +273,10 @@ func force_set_grid_from_data(preset_matrix: Array) -> void:
 
 	if preset_matrix.is_empty():
 		return
+
+	# Tetrominoの形状キーのリストを取得（ランダム選択用）
+	var shape_keys: Array = Tetromino.SHAPE_KEYS
+	var tetromino_data: Dictionary = Tetromino.TETROMINO_DATA
 
 	for y in range(min(HEIGHT, preset_matrix.size())):
 		var row_data: Variant = preset_matrix[y]
@@ -300,14 +292,22 @@ func force_set_grid_from_data(preset_matrix: Array) -> void:
 			if block == null:
 				continue
 
+			# 形状キーからランダムに1つ選んで、色と論理IDを決定する
+			var random_key: String = shape_keys[randi() % shape_keys.size()] as String
+			var chosen_color: Color = Color.WHITE
+			
+			if tetromino_data.has(random_key):
+				var shape_def: Dictionary = tetromino_data[random_key] as Dictionary
+				chosen_color = shape_def.get("color", Color.WHITE) as Color
+
 			if block is ColorRect:
-				block.color = Color(0.5, 0.5, 0.5) # プリセット用のグレー色を明示的に適用
+				block.color = chosen_color
 			if block is CanvasItem:
 				block.visible = true
 				block.modulate.a = 1.0
 
-			# --- 追加: プリセット用ブロックのメタデータ ---
-			block.set_meta("color_id", "PRESET")
+			# ランダムに選ばれた形状キー（"I", "O", "T" など）をメタデータとして正確に付与
+			block.set_meta("color_id", random_key)
 
 			add_child(block)
 			_set_block_position(block, grid_to_pixel(x, y))

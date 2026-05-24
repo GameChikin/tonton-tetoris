@@ -125,13 +125,33 @@ func _spawn_blocks() -> void:
 		push_error("Tetromino: block_scene is not assigned.")
 		return
 
+	# Boardノードから現在のルールを取得（安全のためにデフォルトはTETRIS扱い）
+	var is_puyo_rule := false
+	if board != null and is_instance_valid(board):
+		if "current_rule" in board and "GameRule" in board:
+			# Board.GameRule.PUYO と一致するかチェック
+			is_puyo_rule = (board.current_rule == board.GameRule.PUYO)
+
 	for _i in range(local_cells.size()):
 		var block: Node = block_scene.instantiate()
 		add_child(block)
-		_apply_block_color(block, current_color)
 		
-		# --- 追加: 論理的な色ID（形状キー）をメタデータとして付与 ---
-		block.set_meta("color_id", current_shape_key)
+		var final_color := current_color
+		var final_meta_id := current_shape_key
+
+		# ぷよぷよルールの場合は、ブロックごとに色と名札をランダム抽選する
+		if is_puyo_rule:
+			var random_key: String = SHAPE_KEYS[randi() % SHAPE_KEYS.size()] as String
+			if TETROMINO_DATA.has(random_key):
+				var shape_def: Dictionary = TETROMINO_DATA[random_key] as Dictionary
+				final_color = shape_def.get("color", Color.WHITE) as Color
+				final_meta_id = random_key
+
+		# 見た目の色を反映
+		_apply_block_color(block, final_color)
+		
+		# 論理的な色ID（メタデータ）を付与
+		block.set_meta("color_id", final_meta_id)
 		
 		blocks.append(block)
 

@@ -17,7 +17,6 @@ position = Vector2(160, 320)
 
 [node name="Board" type="Node2D" parent="." unique_id=1510623832]
 script = ExtResource("2_f63ok")
-current_rule = 1
 
 [node name="BoardBackground" type="ColorRect" parent="Board" unique_id=471495757]
 offset_right = 320.0
