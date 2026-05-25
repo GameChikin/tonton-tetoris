@@ -16,11 +16,15 @@ enum GameRule { TETRIS, PUYO }
 @export var tonton_drop_speed: float = 0.02
 @export var tonton_drop_distance: int = 20
 
-var grid: Array[Array] = []
+@export_group("Physics Rule Settings")
+@export var clear_threshold: int = 8
+@export var line_clear_hold_time: float = 1.5
+@export var board_width_px: float = 320.0
+
 var effect_manager: EffectManager
 var score_manager: Node
 var _is_resolving: bool = false
-var _resolve_requested: bool = false
+var _line_timers: Dictionary = {}
 
 
 func _ready() -> void:
@@ -32,18 +36,11 @@ func _ready() -> void:
 
 
 func _initialize_grid() -> void:
-	grid = _build_empty_grid()
+	pass
 
 
 func _build_empty_grid() -> Array[Array]:
-	var next_grid: Array[Array] = []
-	for y in range(HEIGHT):
-		var row: Array = []
-		row.resize(WIDTH)
-		for x in range(WIDTH):
-			row[x] = null
-		next_grid.append(row)
-	return next_grid
+	return []
 
 
 func grid_to_pixel(cell_x: int, cell_y: int) -> Vector2:
@@ -58,260 +55,51 @@ func is_inside(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.x < WIDTH and cell.y >= 0 and cell.y < HEIGHT
 
 
-func is_cell_empty(cell: Vector2i) -> bool:
-	if not is_inside(cell):
-		return false
-	var value: Variant = grid[cell.y][cell.x]
-	return value == null or not is_instance_valid(value)
-
-
-func lock_blocks(blocks: Array[Node], cells: Array[Vector2i]) -> void:
-	for i in range(min(blocks.size(), cells.size())):
-		var block: Node = blocks[i]
-		var cell: Vector2i = cells[i]
-		if not is_inside(cell):
-			continue
-		if not is_instance_valid(block):
-			continue
-
-		_set_block_position(block, grid_to_pixel(cell.x, cell.y))
-		grid[cell.y][cell.x] = block
-
-
-func apply_tonton_drop():
-	_sanitize_invalid_blocks()
-	var drop_targets: Array[Dictionary] = _collect_tonton_drop_targets()
-	if drop_targets.is_empty():
-		return
-
-	var tween_duration: float = 0.0
-	for target in drop_targets:
-		var drop_cells: int = target["drop_cells"] as int
-		tween_duration = max(tween_duration, tonton_drop_speed * float(drop_cells))
-
-	if tween_duration > 0.0:
-		var tween := create_tween()
-		tween.set_parallel(true)
-		for target in drop_targets:
-			var block: Node = target["block"] as Node
-			if not is_instance_valid(block):
-				continue
-			var drop_cells: int = target["drop_cells"] as int
-			if drop_cells <= 0:
-				continue
-			var duration: float = tonton_drop_speed * float(drop_cells)
-			var target_pixel: Vector2 = target["target_pixel"] as Vector2
-			tween.tween_property(block, "position", target_pixel, duration)
-
-		await tween.finished
-	else:
-		for target in drop_targets:
-			var block: Node = target["block"] as Node
-			if not is_instance_valid(block):
-				continue
-			_set_block_position(block, target["target_pixel"] as Vector2)
-
-	var next_grid := _build_empty_grid()
-	for target in drop_targets:
-		var block: Node = target["block"] as Node
-		if not is_instance_valid(block):
-			continue
-		var x: int = target["x"] as int
-		var target_y: int = target["target_y"] as int
-		_set_block_position(block, target["target_pixel"] as Vector2)
-		next_grid[target_y][x] = block
-		
-		# --- 追加: 描画プロパティの強制リセット ---
-		if block is CanvasItem:
-			block.visible = true
-			block.modulate.a = 1.0
-
-	grid = next_grid
-	_sanitize_invalid_blocks()
-
-
-func is_line_full(y: int) -> bool:
-	if y < 0 or y >= HEIGHT:
-		return false
-	for x in range(WIDTH):
-		var block: Variant = grid[y][x]
-		if block == null:
-			return false
-		if not is_instance_valid(block):
-			return false
+func is_cell_empty(_cell: Vector2i) -> bool:
 	return true
 
 
-func apply_tetris_gravity(full_rows: Array[int]) -> void:
-	if full_rows.is_empty():
+func lock_blocks(_blocks: Array[Node], _cells: Array[Vector2i]) -> void:
+	pass
+
+
+func apply_tonton_drop() -> void:
+	var physics_frame = get_node_or_null("BoardPhysicsFrame")
+	if not physics_frame:
 		return
 
-	var next_grid := _build_empty_grid()
-	var write_y := HEIGHT - 1
+	# 盤面内のすべてのTetromino（親RigidBody2D）のFreezeを解除
+	for child in get_children():
+		if child is Tetromino:
+			child.freeze = false
+			var random_impulse = Vector2(randf_range(-60, 60), randf_range(-20, 0))
+			child.apply_central_impulse(random_impulse)
 
-	# 下の行から上に向かって走査
-	for y in range(HEIGHT - 1, -1, -1):
-		# この行が消去された行リストに含まれている場合は、データ読み込みをスキップ（行を詰める）
-		if y in full_rows:
-			continue
+	# 物理枠をTweenでシェイク
+	var tween = create_tween().set_loops(3)
+	var original_pos = physics_frame.position
+	var shake_offset_1 = original_pos + Vector2(randf_range(-6, 6), randf_range(4, 12))
+	var shake_offset_2 = original_pos + Vector2(randf_range(-6, 6), randf_range(-4, -8))
 
-		for x in range(WIDTH):
-			var block: Node = grid[y][x] as Node
-			if block != null and is_instance_valid(block):
-				next_grid[write_y][x] = block
-				# 移動先と元の行に差分がある場合、見た目のY座標をまとめてスライドダウン
-				if write_y != y:
-					var dy := write_y - y
-					if block is Node2D:
-						block.position.y += dy * CELL_SIZE
-					elif block is Control:
-						block.position.y += dy * CELL_SIZE
-		write_y -= 1
+	tween.tween_property(physics_frame, "position", shake_offset_1, 0.03)
+	tween.tween_property(physics_frame, "position", shake_offset_2, 0.03)
+	tween.tween_property(physics_frame, "position", original_pos, 0.02)
 
-	grid = next_grid
+
+func is_line_full(_y: int) -> bool:
+	return false
+
+
+func apply_tetris_gravity(_full_rows: Array[int]) -> void:
+	pass
 
 
 func resolve_lines() -> void:
-	if _is_resolving:
-		_resolve_requested = true
-		await resolve_finished
-		return
-
-	_is_resolving = true
-	resolve_started.emit()
-
-	# 連続消去（テトリスでの全消しや、ぷよルールでの連鎖）を処理するためのメインループ
-	while true:
-		_resolve_requested = false
-		_sanitize_invalid_blocks()
-
-		var blocks_to_clear: Array[Node] = []
-		var lowest_y: int = -1
-		var match_count: int = 0
-
-		# 【判定フェーズ】現在のルールに応じて消去対象の検索のみを切り替え
-		if current_rule == GameRule.TETRIS:
-			var full_rows: Array[int] = _find_full_rows()
-			match_count = full_rows.size()
-			if not full_rows.is_empty():
-				for row in full_rows:
-					lowest_y = max(lowest_y, row)
-					for x in range(WIDTH):
-						var block: Node = grid[row][x] as Node
-						grid[row][x] = null
-						if block != null and is_instance_valid(block):
-							blocks_to_clear.append(block)
-		else:
-			# ぷよぷよルール：同色4つ以上マッチ
-			var puyo_matches: Array[Node] = _find_puyo_matches()
-			match_count = 1 if not puyo_matches.is_empty() else 0
-			if not puyo_matches.is_empty():
-				for block in puyo_matches:
-					if block != null and is_instance_valid(block):
-						blocks_to_clear.append(block)
-						var b_pos := pixel_to_grid(block.position if "position" in block else Vector2.ZERO)
-						lowest_y = max(lowest_y, b_pos.y)
-						if b_pos.y >= 0 and b_pos.y < HEIGHT and b_pos.x >= 0 and b_pos.x < WIDTH:
-							grid[b_pos.y][b_pos.x] = null
-
-		# 消去対象が何もなければ、ルール解決ループを終了
-		if blocks_to_clear.is_empty():
-			if _resolve_requested:
-				continue
-			break
-
-		# 【共通演出フェーズ】
-		# 1. 点滅演出
-		if effect_manager != null and effect_manager.has_method("play_line_blink"):
-			await effect_manager.play_line_blink(blocks_to_clear)
-		
-		# 2. スコア加算とポップアップ
-		if score_manager != null and score_manager.has_method("add_score_for_lines"):
-			var target_y = lowest_y if lowest_y != -1 else int(HEIGHT / 2.0)
-			var popup_pos := grid_to_pixel(int(WIDTH / 2.0), target_y)
-			score_manager.call("add_score_for_lines", match_count, popup_pos)
-		
-		# 3. フラッシュと左からの消去フェードアウト
-		if effect_manager != null and effect_manager.has_method("play_line_vanish_and_flash"):
-			await effect_manager.play_line_vanish_and_flash(blocks_to_clear)
-		
-		# 4. 全演出完了後に安全に実体を破棄
-		for block in blocks_to_clear:
-			if is_instance_valid(block):
-				block.queue_free()
-
-		# 【重力フェーズ】ルールに関わらず、常にテトリス型（形状・空洞維持の一括行シフト）を適用
-		_sanitize_invalid_blocks()
-		
-		var empty_rows: Array[int] = []
-		for y in range(HEIGHT):
-			var is_empty_row := true
-			for x in range(WIDTH):
-				if grid[y][x] != null:
-					is_empty_row = false
-					break
-			if is_empty_row:
-				var has_block_above := false
-				for ay in range(0, y):
-					for ax in range(WIDTH):
-						if grid[ay][ax] != null:
-							has_block_above = true
-							break
-				if has_block_above:
-					empty_rows.append(y)
-					
-		apply_tetris_gravity(empty_rows)
-		_sanitize_invalid_blocks()
-
-	_is_resolving = false
-	resolve_finished.emit()
+	pass
 
 
-func force_set_grid_from_data(preset_matrix: Array) -> void:
-	_clear_all_grid_blocks()
-	grid = _build_empty_grid()
-
-	if preset_matrix.is_empty():
-		return
-
-	# Tetrominoの形状キーのリストを取得（ランダム選択用）
-	var shape_keys: Array = Tetromino.SHAPE_KEYS
-	var tetromino_data: Dictionary = Tetromino.TETROMINO_DATA
-
-	for y in range(min(HEIGHT, preset_matrix.size())):
-		var row_data: Variant = preset_matrix[y]
-		if not (row_data is Array):
-			continue
-
-		var row: Array = row_data as Array
-		for x in range(min(WIDTH, row.size())):
-			if not _is_filled_preset_cell(row[x]):
-				continue
-
-			var block: Node = _instantiate_block()
-			if block == null:
-				continue
-
-			# 形状キーからランダムに1つ選んで、色と論理IDを決定する
-			var random_key: String = shape_keys[randi() % shape_keys.size()] as String
-			var chosen_color: Color = Color.WHITE
-			
-			if tetromino_data.has(random_key):
-				var shape_def: Dictionary = tetromino_data[random_key] as Dictionary
-				chosen_color = shape_def.get("color", Color.WHITE) as Color
-
-			if block is ColorRect:
-				block.color = chosen_color
-			if block is CanvasItem:
-				block.visible = true
-				block.modulate.a = 1.0
-
-			# ランダムに選ばれた形状キー（"I", "O", "T" など）をメタデータとして正確に付与
-			block.set_meta("color_id", random_key)
-
-			add_child(block)
-			_set_block_position(block, grid_to_pixel(x, y))
-			grid[y][x] = block
+func force_set_grid_from_data(_preset_matrix: Array) -> void:
+	pass
 
 
 func _find_full_rows() -> Array[int]:
@@ -323,24 +111,11 @@ func _find_full_rows() -> Array[int]:
 
 
 func _sanitize_invalid_blocks() -> void:
-	for y in range(HEIGHT):
-		for x in range(WIDTH):
-			var block: Variant = grid[y][x]
-			if block != null and not is_instance_valid(block):
-				grid[y][x] = null
+	pass
 
 
 func _clear_all_grid_blocks() -> void:
-	for y in range(HEIGHT):
-		for x in range(WIDTH):
-			var block: Node = grid[y][x] as Node
-			grid[y][x] = null # 参照エラーを防ぐためノード破棄の前に必ずnull化
-
-			if block == null:
-				continue
-			if not is_instance_valid(block):
-				continue
-			block.queue_free()
+	pass
 
 
 func _instantiate_block() -> Node:
@@ -367,36 +142,7 @@ func _is_filled_preset_cell(value: Variant) -> bool:
 
 
 func _collect_tonton_drop_targets() -> Array[Dictionary]:
-	var targets: Array[Dictionary] = []
-	var grid_snapshot: Array[Array] = _build_empty_grid()
-	for y in range(HEIGHT):
-		for x in range(WIDTH):
-			grid_snapshot[y][x] = grid[y][x]
-
-	var placement_scratch: Array[Array] = _build_empty_grid()
-	var max_drop_distance: int = max(tonton_drop_distance, 0)
-
-	for x in range(WIDTH):
-		var write_y := HEIGHT - 1
-		for y in range(HEIGHT - 1, -1, -1):
-			var block: Node = grid_snapshot[y][x] as Node
-			if block == null:
-				continue
-			if not is_instance_valid(block):
-				continue
-
-			var target_y: int = min(write_y, y + max_drop_distance)
-			placement_scratch[target_y][x] = block
-			targets.append({
-				"block": block,
-				"x": x,
-				"target_y": target_y,
-				"drop_cells": target_y - y,
-				"target_pixel": grid_to_pixel(x, target_y),
-			})
-			write_y = target_y - 1
-
-	return targets
+	return []
 
 
 func _set_block_position(block: Node, pixel: Vector2) -> void:
@@ -445,81 +191,110 @@ func _debug_print_grid_state(method_name: String, label: String, target_grid: Ar
 
 # ぷよぷよ用：空きマスを埋めるように個別に落下する重力
 func apply_puyo_gravity() -> bool:
-	var moved := false
-	for y in range(HEIGHT - 2, -1, -1):
-		for x in range(WIDTH):
-			var block: Node = grid[y][x] as Node
-			if block == null or not is_instance_valid(block):
-				continue
-
-			var below: Node = grid[y + 1][x] as Node
-			if below != null and not is_instance_valid(below):
-				grid[y + 1][x] = null
-				below = null
-			
-			if below == null:
-				grid[y + 1][x] = block
-				grid[y][x] = null
-				if block is Node2D:
-					block.position.y += CELL_SIZE
-				elif block is Control:
-					block.position.y += CELL_SIZE
-				moved = true
-	return moved
+	return false
 
 
 # ぷよぷよ用：上下左右に同色が4つ以上繋がっているブロック群を検索
 func _find_puyo_matches() -> Array[Node]:
-	var matched_blocks: Array[Node] = []
-	var visited: Array[Array] = []
-	for y in range(HEIGHT):
-		var row: Array[bool] = []
-		row.resize(WIDTH)
-		row.fill(false)
-		visited.append(row)
+	return []
 
-	var directions := [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]
 
-	for y in range(HEIGHT):
-		for x in range(WIDTH):
-			if visited[y][x]:
-				continue
-				
-			var block: Node = grid[y][x] as Node
-			if block == null or not is_instance_valid(block):
-				continue
+func _physics_process(delta: float) -> void:
+	if _is_resolving:
+		return
 
-			var color_id: String = block.get_meta("color_id", "")
-			if color_id == "" or color_id == "PRESET":
-				visited[y][x] = true
-				continue
+	var physics_frame = get_node_or_null("BoardPhysicsFrame")
+	if not physics_frame:
+		return
 
-			# 幅優先探索 (BFS) で同色ブロックのグループを検出
-			var group: Array[Node] = []
-			var queue: Array[Vector2i] = [Vector2i(x, y)]
-			visited[y][x] = true
+	var blocks_by_row: Dictionary = {}
+	var row_size = CELL_SIZE
 
-			var head := 0
-			while head < queue.size():
-				var curr := queue[head]
-				head += 1
-				var curr_block: Node = grid[curr.y][curr.x] as Node
-				if curr_block != null and is_instance_valid(curr_block):
-					group.append(curr_block)
+	# ブロックの収集と枠内判定
+	for child in get_children():
+		if child is Tetromino:
+			for block in child.get_children():
+				if block is CollisionShape2D and not block.disabled:
+					# ブロックの座標を物理枠のローカル座標に変換して枠内かチェック
+					var local_pos = physics_frame.to_local(block.global_position)
+					# 左右の壁の内側(0〜320)に存在するか（少しマージンを設ける）
+					if local_pos.x >= -4.0 and local_pos.x <= board_width_px + 4.0:
+						var row_idx = int(round(block.global_position.y / row_size))
+						if not blocks_by_row.has(row_idx):
+							blocks_by_row[row_idx] = []
+						blocks_by_row[row_idx].append(block)
 
-				for d: Vector2i in directions:
-					var nx := curr.x + d.x
-					var ny := curr.y + d.y
-					if nx >= 0 and nx < WIDTH and ny >= 0 and ny < HEIGHT:
-						if not visited[ny][nx]:
-							var n_block: Node = grid[ny][nx] as Node
-							if n_block != null and is_instance_valid(n_block):
-								if n_block.get_meta("color_id", "") == color_id:
-									visited[ny][nx] = true
-									queue.append(Vector2i(nx, ny))
+	var current_full_rows = []
+	var lines_to_clear: Array[Node] = []
+	var ready_to_clear = false
 
-			# グループが4つ以上繋がっていれば消去対象に追加
-			if group.size() >= 4:
-				matched_blocks.append_array(group)
+	# 揃っているラインのタイマー進行と色変更
+	for row_idx in blocks_by_row.keys():
+		var row_blocks = blocks_by_row[row_idx]
+		if row_blocks.size() >= clear_threshold:
+			current_full_rows.append(row_idx)
+			if not _line_timers.has(row_idx):
+				_line_timers[row_idx] = 0.0
 
-	return matched_blocks
+			_line_timers[row_idx] += delta
+			var progress = clampf(_line_timers[row_idx] / line_clear_hold_time, 0.0, 1.0)
+
+			for block in row_blocks:
+				if is_instance_valid(block):
+					# 徐々に明るく、発光していく演出（値を1.0以上にすることで白く輝く）
+					var glow = progress * 2.5
+					block.modulate = Color(1.0 + glow, 1.0 + glow, 1.0 + glow, 1.0)
+
+			if _line_timers[row_idx] >= line_clear_hold_time:
+				ready_to_clear = true
+				lines_to_clear.append_array(row_blocks)
+
+	# 崩れてラインから外れた行のタイマーをリセット
+	var to_erase = []
+	for row_idx in _line_timers.keys():
+		if not current_full_rows.has(row_idx):
+			to_erase.append(row_idx)
+	for row_idx in to_erase:
+		_line_timers.erase(row_idx)
+
+	# 状態がリセットされたブロックの色を戻す
+	for child in get_children():
+		if child is Tetromino:
+			for block in child.get_children():
+				if block is CollisionShape2D and not block.disabled:
+					var row_idx = int(round(block.global_position.y / row_size))
+					if not current_full_rows.has(row_idx):
+						block.modulate = Color.WHITE
+
+	# 判定時間を越えたら消去実行
+	if ready_to_clear:
+		_line_timers.clear()
+		_is_resolving = true
+		_do_line_clear(lines_to_clear)
+
+
+func _do_line_clear(lines_to_clear: Array[Node]) -> void:
+	for block in lines_to_clear:
+		if is_instance_valid(block):
+			block.set_deferred("disabled", true)
+			block.modulate = Color.WHITE # エフェクト用に色を戻す
+
+	if is_instance_valid(effect_manager):
+		await effect_manager.play_line_vanish_and_flash(lines_to_clear)
+	else:
+		await get_tree().create_timer(0.3).timeout
+
+	var affected_tetrominos: Dictionary = {}
+	for block in lines_to_clear:
+		if is_instance_valid(block):
+			var parent = block.get_parent()
+			if is_instance_valid(parent) and parent is Tetromino:
+				affected_tetrominos[parent] = true
+			block.queue_free()
+
+	await get_tree().process_frame
+	for tet in affected_tetrominos:
+		if is_instance_valid(tet) and tet.get_child_count() == 0:
+			tet.queue_free()
+
+	_is_resolving = false

@@ -1,5 +1,13 @@
 [gd_scene format=3 uid="uid://chthadfyd3vl8"]
 
-[node name="Block" type="ColorRect" unique_id=2061533216]
-offset_right = 32.0
-offset_bottom = 32.0
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_2wby2"]
+size = Vector2(32, 32)
+
+[node name="Block" type="CollisionShape2D" unique_id=349509749]
+shape = SubResource("RectangleShape2D_2wby2")
+
+[node name="ColorRect" type="ColorRect" parent="." unique_id=1970655169]
+offset_left = -16.0
+offset_top = -16.0
+offset_right = 16.0
+offset_bottom = 16.0

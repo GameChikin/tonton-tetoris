@@ -16,6 +16,9 @@ var _flash_rect: ColorRect
 
 
 func _ready() -> void:
+	# 時間停止（ポーズ）中もこのノードの処理（演出）を続行するための設定
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
 	camera = get_node_or_null(camera_path) as Camera2D
 	if camera == null:
 		camera = get_parent().get_node_or_null("Camera2D") as Camera2D
@@ -111,27 +114,57 @@ func play_line_blink(blocks: Array[Node]) -> void:
 func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 	if blocks.is_empty():
 		return
-		
-	if _flash_rect != null and is_instance_valid(_flash_rect):
-		var flash_tween := create_tween()
-		_flash_rect.modulate.a = 0.8
-		flash_tween.tween_property(_flash_rect, "modulate:a", 0.0, 0.3)
-		
-	blocks.sort_custom(func(a, b): 
-		if not is_instance_valid(a) or not is_instance_valid(b): return false
-		var ax = a.position.x if "position" in a else 0
-		var bx = b.position.x if "position" in b else 0
-		return ax < bx
-	)
-	
-	var tween := create_tween()
-	var fade_time := 0.1
-	var delay_step := 0.02
-	var current_delay := 0.0
-	
+
+	# 1. 時間停止（物理演算・ゲーム進行を一時ストップ）
+	get_tree().paused = true
+
+	var valid_color_rects: Array[ColorRect] = []
 	for block in blocks:
-		if is_instance_valid(block) and block is CanvasItem:
-			tween.parallel().tween_property(block, "modulate:a", 0.0, fade_time).set_delay(current_delay)
-			current_delay += delay_step
-			
-	await tween.finished
+		if is_instance_valid(block):
+			var cr = block.get_node_or_null("ColorRect") as ColorRect
+			if is_instance_valid(cr):
+				valid_color_rects.append(cr)
+
+	if valid_color_rects.is_empty():
+		get_tree().paused = false
+		return
+
+	# 2. 画面全体のフラッシュ演出（FlashLayer）
+	if is_instance_valid(_flash_rect):
+		_flash_rect.modulate.a = 0.6
+		var flash_tween = create_tween()
+		flash_tween.tween_property(_flash_rect, "modulate:a", 0.0, 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+	# 3. ラインの点滅演出（チカチカさせる）
+	var blink_tween = create_tween()
+	var blink_duration = 0.06
+	var blink_count = 4
+
+	for i in range(blink_count):
+		# 透明にする
+		blink_tween.tween_callback(func(): _set_blocks_alpha(valid_color_rects, 0.0))
+		blink_tween.tween_interval(blink_duration)
+		# 元に戻す
+		blink_tween.tween_callback(func(): _set_blocks_alpha(valid_color_rects, 1.0))
+		blink_tween.tween_interval(blink_duration)
+
+	await blink_tween.finished
+
+	# 4. 消失演出（縮小しながらフェードアウト）
+	var vanish_tween = create_tween().set_parallel(true)
+	for cr in valid_color_rects:
+		if is_instance_valid(cr):
+			vanish_tween.tween_property(cr, "scale", Vector2.ZERO, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+			vanish_tween.tween_property(cr, "modulate:a", 0.0, 0.2)
+
+	await vanish_tween.finished
+
+	# 5. 演出完了後、時間停止を解除
+	get_tree().paused = false
+
+
+# 点滅演出用のアルファ値一括変更ヘルパー
+func _set_blocks_alpha(rects: Array[ColorRect], alpha: float) -> void:
+	for cr in rects:
+		if is_instance_valid(cr):
+			cr.modulate.a = alpha

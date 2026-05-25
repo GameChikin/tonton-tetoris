@@ -1,4 +1,4 @@
-extends Node2D
+extends RigidBody2D
 class_name Tetromino
 signal locked_to_board
 
@@ -42,6 +42,16 @@ const SHAPE_KEYS: Array[String] = ["I", "O", "T", "S", "Z", "J", "L"]
 @export var fall_interval := 0.6
 @export var soft_drop_interval := 0.06
 
+@export_group("Physics Sleep Settings")
+@export var sleep_threshold_velocity: float = 15.0
+@export var sleep_delay_time: float = 0.2
+
+@export_group("Magnetic Snap Settings")
+@export var snap_rotation_strength: float = 12.0 # 角度を引き寄せる力の強さ
+@export var snap_rotation_limit: float = 25.0    # 目標角度から何度以内なら磁力をかけるか
+@export var snap_x_strength: float = 8.0         # X座標を引き寄せる力の強さ
+@export var snap_x_limit: float = 12.0           # 目標X座標から何px以内なら磁力をかけるか
+
 var board: Board
 var blocks: Array[Node] = []
 var local_cells: Array[Vector2i] = []
@@ -50,6 +60,7 @@ var current_color := Color.WHITE
 var current_shape_key := "I"
 
 var _fall_timer := 0.0
+var _still_timer: float = 0.0
 var _is_locked := false
 var _is_input_paused := false
 
@@ -62,18 +73,37 @@ func _ready() -> void:
 	_sync_block_positions()
 
 
-func _process(delta: float) -> void:
-	if _is_locked or _is_input_paused:
+func _physics_process(delta: float) -> void:
+	if _is_locked:
+		# --- 磁力（スナップ）補正 ---
+		# 回転（Rotation）補正：最も近い90度の倍数に引き寄せる
+		var current_deg = rad_to_deg(rotation)
+		var target_deg = round(current_deg / 90.0) * 90.0
+		var angle_diff = target_deg - current_deg
+		
+		# 指定された角度以内に近づいた場合のみ、角速度(Angular Velocity)に介入して姿勢を戻す
+		if abs(angle_diff) <= snap_rotation_limit and abs(angle_diff) > 0.1:
+			var target_ang_vel = deg_to_rad(angle_diff) * snap_rotation_strength
+			angular_velocity = lerp(angular_velocity, target_ang_vel, delta * 15.0)
+			
+		# X座標（Position）補正：最も近い32px(CELL_SIZE)のグリッドに引き寄せる
+		var cell_size = 32.0
+		var target_x = round(global_position.x / cell_size) * cell_size
+		var x_diff = target_x - global_position.x
+		
+		# 指定されたピクセル以内に近づいた場合のみ、横方向の速度(Linear Velocity X)に介入して引き寄せる
+		if abs(x_diff) <= snap_x_limit and abs(x_diff) > 0.5:
+			var target_vx = x_diff * snap_x_strength
+			linear_velocity.x = lerp(linear_velocity.x, target_vx, delta * 15.0)
+			
 		return
 
-	_handle_input()
-
-	var interval := fall_interval
-	if Input.is_action_pressed("move_down"):
-		interval = soft_drop_interval
+	# 操作中の自然落下のみ（プレイヤー入力は無効、AI専用）
+	if _is_input_paused:
+		return
 
 	_fall_timer += delta
-	if _fall_timer >= interval:
+	if _fall_timer >= fall_interval:
 		_fall_timer = 0.0
 		if not _try_move(Vector2i.DOWN):
 			_lock_to_board()
@@ -157,19 +187,9 @@ func _spawn_blocks() -> void:
 
 
 func _apply_block_color(block: Node, color: Color) -> void:
-	if block is ColorRect:
-		(block as ColorRect).color = color
-
-
-func _handle_input() -> void:
-	if Input.is_action_just_pressed("move_left"):
-		_try_move(Vector2i.LEFT)
-	if Input.is_action_just_pressed("move_right"):
-		_try_move(Vector2i.RIGHT)
-	if Input.is_action_just_pressed("move_fall"):
-		_hard_drop()
-	if Input.is_action_just_pressed("rotate"):
-		_try_rotate()
+	var color_rect = block.get_node_or_null("ColorRect")
+	if color_rect and color_rect is ColorRect:
+		color_rect.color = color
 
 
 func _hard_drop() -> void:
@@ -240,37 +260,19 @@ func _get_absolute_cells() -> Array[Vector2i]:
 func _lock_to_board() -> void:
 	if _is_locked:
 		return
-
 	_is_locked = true
 	_is_input_paused = true
 
-	if board == null or not is_instance_valid(board):
-		set_process(false)
-		if is_instance_valid(self):
-			queue_free()
-		return
+	# 自身（テトロミノ全体の塊）をBoardの子ノードへ移籍
+	reparent(board)
 
-	var absolute_cells: Array[Vector2i] = _get_absolute_cells()
-	var locked_blocks: Array[Node] = []
-	var locked_cells: Array[Vector2i] = []
+	# 物理演算を有効化。内包する4つのブロックが1つの物体として落下を開始する
+	freeze = false
 
-	for i in range(min(blocks.size(), absolute_cells.size())):
-		var block: Node = blocks[i]
-		if not is_instance_valid(block):
-			continue
-
-		if block.get_parent() != board:
-			block.reparent(board)
-
-		locked_blocks.append(block)
-		locked_cells.append(absolute_cells[i])
-
-	board.lock_blocks(locked_blocks, locked_cells)
+	# Board側の管理用メソッドへ通知
+	var abs_cells = _get_absolute_cells()
+	board.lock_blocks(blocks, abs_cells)
 	locked_to_board.emit()
-
-	set_process(false)
-	if is_instance_valid(self):
-		queue_free()
 
 
 func _set_block_position(block: Node, pixel: Vector2) -> void:
@@ -281,3 +283,18 @@ func _set_block_position(block: Node, pixel: Vector2) -> void:
 		(block as Node2D).position = pixel
 	elif block is Control:
 		(block as Control).position = pixel
+
+
+# AIからの操作を受け入れ、指定X座標へ移動後に即座に物理落下を開始する
+func execute_ai_drop(target_x: float) -> void:
+	if _is_locked or _is_input_paused:
+		return
+
+	# プレイヤーの操作権限を剥奪
+	_is_input_paused = true
+
+	# 指定されたX座標へ瞬時に移動（Y座標は現在の生成位置を維持）
+	global_position.x = target_x
+
+	# 即座に盤面へ固定（物理演算の有効化と自由落下処理）へ移行
+	_lock_to_board()

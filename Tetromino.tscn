@@ -1,8 +1,19 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene format=3 uid="uid://n7wk1ykmotfm"]
 
-[ext_resource type="Script" path="res://Tetromino.gd" id="1_m4h6v"]
-[ext_resource type="PackedScene" path="res://Block.tscn" id="2_x7q2n"]
+[ext_resource type="Script" uid="uid://bkxcajno461rs" path="res://Tetromino.gd" id="1_m4h6v"]
+[ext_resource type="PackedScene" uid="uid://chthadfyd3vl8" path="res://Block.tscn" id="2_x7q2n"]
 
-[node name="Tetromino" type="Node2D"]
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_wsxbt"]
+friction = 0.6
+bounce = 0.5
+
+[node name="Tetromino" type="RigidBody2D" unique_id=1567414139]
+physics_material_override = SubResource("PhysicsMaterial_wsxbt")
+freeze = true
+continuous_cd = 2
+contact_monitor = true
+max_contacts_reported = 4
+linear_damp = 5.0
+angular_damp = 5.0
 script = ExtResource("1_m4h6v")
 block_scene = ExtResource("2_x7q2n")

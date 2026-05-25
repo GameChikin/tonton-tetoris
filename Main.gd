@@ -4,6 +4,8 @@ extends Node2D
 @export var effect_manager_path: NodePath = NodePath("EffectManager")
 @export var tetromino_scene: PackedScene
 
+@onready var ai_controller: AIController = get_node_or_null("AIController")
+
 var board: Board
 var effect_manager: EffectManager
 var active_tetromino: Tetromino
@@ -14,6 +16,10 @@ func _ready() -> void:
 	board = get_node_or_null(board_path) as Board
 	effect_manager = get_node_or_null(effect_manager_path) as EffectManager
 	_spawn_tetromino()
+
+	# AIControllerが存在する場合、Mainの参照を渡してセットアップを実行
+	if is_instance_valid(ai_controller):
+		ai_controller.setup(self)
 
 
 func _input(event: InputEvent) -> void:
@@ -47,32 +53,27 @@ func _spawn_tetromino() -> void:
 
 func _on_active_tetromino_locked() -> void:
 	active_tetromino = null
-	_is_busy = true
-
-	if board != null and is_instance_valid(board):
-		await board.resolve_lines()
-
-	_is_busy = false
 	_spawn_tetromino()
 
 
 func _run_tonton() -> void:
 	if _is_busy:
 		return
-
 	_is_busy = true
 
-	if active_tetromino != null and is_instance_valid(active_tetromino):
+	if is_instance_valid(active_tetromino):
 		active_tetromino.pause_input()
 
-	if effect_manager != null and is_instance_valid(effect_manager):
-		await effect_manager.shake_camera()
+	if is_instance_valid(effect_manager):
+		effect_manager.shake_camera()
 
-	if board != null and is_instance_valid(board):
-		await board.apply_tonton_drop()
-		await board.resolve_lines()
+	if is_instance_valid(board):
+		board.apply_tonton_drop()
 
-	if active_tetromino != null and is_instance_valid(active_tetromino):
+	# 物理挙動が落ち着くまでの猶予
+	await get_tree().create_timer(1.5).timeout
+
+	if is_instance_valid(active_tetromino):
 		active_tetromino.resume_input()
 
 	_is_busy = false
