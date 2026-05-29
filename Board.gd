@@ -9,17 +9,11 @@ const HEIGHT := 20
 const CELL_SIZE := 32
 
 enum GameRule { TETRIS, PUYO }
-@export var current_rule: GameRule = GameRule.TETRIS
 @export var effect_manager_path: NodePath = NodePath("../EffectManager")
 @export var score_manager_path: NodePath = NodePath("../ScoreManager")
 @export var block_scene: PackedScene = preload("res://Block.tscn")
-@export var tonton_drop_speed: float = 0.02
-@export var tonton_drop_distance: int = 20
 
-@export_group("Physics Rule Settings")
-@export var clear_threshold: int = 8
-@export var line_clear_hold_time: float = 1.5
-@export var board_width_px: float = 320.0
+var settings: GameSettings = preload("res://game_settings.tres")
 
 var effect_manager: EffectManager
 var score_manager: Node
@@ -68,14 +62,7 @@ func apply_tonton_drop() -> void:
 	if not physics_frame:
 		return
 
-	# 盤面内のすべてのTetromino（親RigidBody2D）のFreezeを解除
-	for child in get_children():
-		if child is Tetromino:
-			child.freeze = false
-			var random_impulse = Vector2(randf_range(-60, 60), randf_range(-20, 0))
-			child.apply_central_impulse(random_impulse)
-
-	# 物理枠をTweenでシェイク
+	# 1. 物理枠をTweenでシェイク（打撃感の演出）
 	var tween = create_tween().set_loops(3)
 	var original_pos = physics_frame.position
 	var shake_offset_1 = original_pos + Vector2(randf_range(-6, 6), randf_range(4, 12))
@@ -84,6 +71,84 @@ func apply_tonton_drop() -> void:
 	tween.tween_property(physics_frame, "position", shake_offset_1, 0.03)
 	tween.tween_property(physics_frame, "position", shake_offset_2, 0.03)
 	tween.tween_property(physics_frame, "position", original_pos, 0.02)
+
+	# 2. すべてのテトリミノを物理演算から切り離し（Freeze）、Y座標の降順（下にある順）にソート
+	var tetrominos: Array[Node] = []
+	for child in get_children():
+		if child is Tetromino and child.get("_is_locked"):
+			child.freeze = true
+			tetrominos.append(child)
+
+	tetrominos.sort_custom(func(a, b): return a.global_position.y > b.global_position.y)
+
+	# 3. 仮想グリッドによる重ならない目標位置の計算
+	var frame_origin = physics_frame.global_position
+	var occupied_cells: Dictionary = {}
+	var snap_tween = create_tween().set_parallel(true)
+
+	for tet in tetrominos:
+		var current_deg = rad_to_deg(tet.rotation)
+		var target_deg = round(current_deg / 90.0) * 90.0
+		var target_rad = deg_to_rad(target_deg)
+
+		var local_pos = tet.global_position - frame_origin
+		var grid_x = round(local_pos.x / CELL_SIZE)
+		var grid_y = round(local_pos.y / CELL_SIZE)
+
+		var valid_position_found = false
+		var target_global_pos = Vector2.ZERO
+		var x_offset = 0
+
+		# 衝突しない安全な配置座標を探索
+		while not valid_position_found and grid_y >= -5:
+			valid_position_found = true
+			target_global_pos = frame_origin + Vector2((grid_x + x_offset) * CELL_SIZE, grid_y * CELL_SIZE)
+
+			var out_of_left = false
+			var out_of_right = false
+
+			for block in tet.get_children():
+				if block is CollisionShape2D:
+					var block_offset = block.position.rotated(target_rad)
+					var b_local = (target_global_pos + block_offset) - frame_origin
+					var bx = round(b_local.x / CELL_SIZE)
+					var by = round(b_local.y / CELL_SIZE)
+
+					if bx < 0: out_of_left = true
+					if bx >= WIDTH: out_of_right = true
+					if by >= HEIGHT or occupied_cells.has(Vector2i(bx, by)):
+						valid_position_found = false
+
+			if out_of_left:
+				x_offset += 1
+				valid_position_found = false
+			elif out_of_right:
+				x_offset -= 1
+				valid_position_found = false
+			elif not valid_position_found:
+				# 床や他のブロックに被った場合は1段上へ
+				grid_y -= 1
+				x_offset = 0 # 横ズレはリセット
+
+		# 確定した位置を仮想グリッドに登録
+		for block in tet.get_children():
+			if block is CollisionShape2D:
+				var block_offset = block.position.rotated(target_rad)
+				var b_local = (target_global_pos + block_offset) - frame_origin
+				var bx = round(b_local.x / CELL_SIZE)
+				var by = round(b_local.y / CELL_SIZE)
+				occupied_cells[Vector2i(bx, by)] = true
+
+		# Tweenでシュッと吸い込まれるように移動
+		snap_tween.tween_property(tet, "global_position", target_global_pos, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		snap_tween.tween_property(tet, "rotation", target_rad, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+	# 4. 移動完了後、物理演算を再開（パズル的緊張感の維持）
+	snap_tween.chain().tween_callback(func():
+		for tet in tetrominos:
+			if is_instance_valid(tet):
+				tet.freeze = false
+	)
 
 
 func is_line_full(_y: int) -> bool:
@@ -218,7 +283,7 @@ func _physics_process(delta: float) -> void:
 					# ブロックの座標を物理枠のローカル座標に変換して枠内かチェック
 					var local_pos = physics_frame.to_local(block.global_position)
 					# 左右の壁の内側(0〜320)に存在するか（少しマージンを設ける）
-					if local_pos.x >= -4.0 and local_pos.x <= board_width_px + 4.0:
+					if local_pos.x >= -4.0 and local_pos.x <= settings.board_width_px + 4.0:
 						var row_idx = int(round(block.global_position.y / row_size))
 						if not blocks_by_row.has(row_idx):
 							blocks_by_row[row_idx] = []
@@ -231,13 +296,13 @@ func _physics_process(delta: float) -> void:
 	# 揃っているラインのタイマー進行と色変更
 	for row_idx in blocks_by_row.keys():
 		var row_blocks = blocks_by_row[row_idx]
-		if row_blocks.size() >= clear_threshold:
+		if row_blocks.size() >= settings.clear_threshold:
 			current_full_rows.append(row_idx)
 			if not _line_timers.has(row_idx):
 				_line_timers[row_idx] = 0.0
 
 			_line_timers[row_idx] += delta
-			var progress = clampf(_line_timers[row_idx] / line_clear_hold_time, 0.0, 1.0)
+			var progress = clampf(_line_timers[row_idx] / settings.line_clear_hold_time, 0.0, 1.0)
 
 			for block in row_blocks:
 				if is_instance_valid(block):
@@ -245,7 +310,7 @@ func _physics_process(delta: float) -> void:
 					var glow = progress * 2.5
 					block.modulate = Color(1.0 + glow, 1.0 + glow, 1.0 + glow, 1.0)
 
-			if _line_timers[row_idx] >= line_clear_hold_time:
+			if _line_timers[row_idx] >= settings.line_clear_hold_time:
 				ready_to_clear = true
 				lines_to_clear.append_array(row_blocks)
 

@@ -13,6 +13,12 @@ var _is_busy: bool = false
 
 
 func _ready() -> void:
+	# --- 設定値のデバッグログ出力 ---
+	var settings: GameSettings = preload("res://game_settings.tres")
+	if settings and settings.has_method("print_all_settings"):
+		settings.print_all_settings()
+	# --------------------------------
+
 	board = get_node_or_null(board_path) as Board
 	effect_manager = get_node_or_null(effect_manager_path) as EffectManager
 	_spawn_tetromino()

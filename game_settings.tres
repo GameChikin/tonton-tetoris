@@ -1,0 +1,7 @@
+[gd_resource type="Resource" script_class="GameSettings" format=3 uid="uid://p1t58wxpp856"]
+
+[ext_resource type="Script" uid="uid://g2a7w53getb1" path="res://GameSettings.gd" id="1_pynj7"]
+
+[resource]
+script = ExtResource("1_pynj7")
+line_clear_hold_time = 0.0

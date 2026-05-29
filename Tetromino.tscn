@@ -4,8 +4,7 @@
 [ext_resource type="PackedScene" uid="uid://chthadfyd3vl8" path="res://Block.tscn" id="2_x7q2n"]
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_wsxbt"]
-friction = 0.6
-bounce = 0.5
+friction = 0.81
 
 [node name="Tetromino" type="RigidBody2D" unique_id=1567414139]
 physics_material_override = SubResource("PhysicsMaterial_wsxbt")
@@ -17,3 +16,6 @@ linear_damp = 5.0
 angular_damp = 5.0
 script = ExtResource("1_m4h6v")
 block_scene = ExtResource("2_x7q2n")
+snap_rotation_strength = 20.0
+snap_x_strength = 20.0
+snap_x_limit = 20.0

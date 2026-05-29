@@ -42,15 +42,8 @@ const SHAPE_KEYS: Array[String] = ["I", "O", "T", "S", "Z", "J", "L"]
 @export var fall_interval := 0.6
 @export var soft_drop_interval := 0.06
 
-@export_group("Physics Sleep Settings")
-@export var sleep_threshold_velocity: float = 15.0
-@export var sleep_delay_time: float = 0.2
-
-@export_group("Magnetic Snap Settings")
-@export var snap_rotation_strength: float = 12.0 # 角度を引き寄せる力の強さ
-@export var snap_rotation_limit: float = 25.0    # 目標角度から何度以内なら磁力をかけるか
-@export var snap_x_strength: float = 8.0         # X座標を引き寄せる力の強さ
-@export var snap_x_limit: float = 12.0           # 目標X座標から何px以内なら磁力をかけるか
+# 一元管理された設定リソースを読み込み
+var settings: GameSettings = preload("res://game_settings.tres")
 
 var board: Board
 var blocks: Array[Node] = []
@@ -63,18 +56,64 @@ var _fall_timer := 0.0
 var _still_timer: float = 0.0
 var _is_locked := false
 var _is_input_paused := false
+var _is_dragging_by_player: bool = false
+var _player_drag_offset: Vector2 = Vector2.ZERO
+var _original_collision_mask: int = 0
 
 
 func _ready() -> void:
 	board = get_node_or_null(board_path) as Board
 	pivot = initial_pivot
+	
+	# 元の衝突マスクを記憶（後で復元するため）
+	_original_collision_mask = collision_mask
+	
 	_select_shape_data()
 	_spawn_blocks()
 	_sync_block_positions()
 
 
+func _input(event: InputEvent) -> void:
+	if not _is_locked:
+		return # 落下中（操作前）のブロックは掴めないようにする
+
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			# マウスポインタがこのテトリミノのいずれかのブロック内にあるかチェック
+			var mouse_pos = get_global_mouse_position()
+			var clicked_me = false
+			
+			for block in get_children():
+				if block is CollisionShape2D:
+					# 大雑把な距離判定（各ブロックの32px範囲内か）
+					if block.global_position.distance_to(mouse_pos) < 24.0:
+						clicked_me = true
+						break
+			
+			if clicked_me:
+				_is_dragging_by_player = true
+				_player_drag_offset = mouse_pos - global_position
+				freeze = true # ドラッグ中は物理演算を止める
+				collision_mask = 0 # ★他のブロックや壁との衝突を完全に無視（ゴースト化）
+				get_viewport().set_input_as_handled() # イベントを消費
+		else:
+			if _is_dragging_by_player:
+				_is_dragging_by_player = false
+				freeze = false # 物理を復活
+				collision_mask = _original_collision_mask # ★衝突判定を元に戻す
+				
+				# 離した瞬間の急激な爆発を防ぐため、一瞬だけ速度をゼロにする
+				linear_velocity = Vector2.ZERO
+				angular_velocity = 0.0
+
+
 func _physics_process(delta: float) -> void:
 	if _is_locked:
+		# プレイヤーがドラッグ中の場合、マウス座標へ追従させる
+		if _is_dragging_by_player:
+			global_position = get_global_mouse_position() - _player_drag_offset
+			return # ドラッグ中は以下の磁力補正などはスキップ
+
 		# --- 磁力（スナップ）補正 ---
 		# 回転（Rotation）補正：最も近い90度の倍数に引き寄せる
 		var current_deg = rad_to_deg(rotation)
@@ -82,8 +121,8 @@ func _physics_process(delta: float) -> void:
 		var angle_diff = target_deg - current_deg
 		
 		# 指定された角度以内に近づいた場合のみ、角速度(Angular Velocity)に介入して姿勢を戻す
-		if abs(angle_diff) <= snap_rotation_limit and abs(angle_diff) > 0.1:
-			var target_ang_vel = deg_to_rad(angle_diff) * snap_rotation_strength
+		if abs(angle_diff) <= settings.snap_rotation_limit and abs(angle_diff) > 0.1:
+			var target_ang_vel = deg_to_rad(angle_diff) * settings.snap_rotation_strength
 			angular_velocity = lerp(angular_velocity, target_ang_vel, delta * 15.0)
 			
 		# X座標（Position）補正：最も近い32px(CELL_SIZE)のグリッドに引き寄せる
@@ -92,8 +131,8 @@ func _physics_process(delta: float) -> void:
 		var x_diff = target_x - global_position.x
 		
 		# 指定されたピクセル以内に近づいた場合のみ、横方向の速度(Linear Velocity X)に介入して引き寄せる
-		if abs(x_diff) <= snap_x_limit and abs(x_diff) > 0.5:
-			var target_vx = x_diff * snap_x_strength
+		if abs(x_diff) <= settings.snap_x_limit and abs(x_diff) > 0.5:
+			var target_vx = x_diff * settings.snap_x_strength
 			linear_velocity.x = lerp(linear_velocity.x, target_vx, delta * 15.0)
 			
 		return
@@ -155,12 +194,11 @@ func _spawn_blocks() -> void:
 		push_error("Tetromino: block_scene is not assigned.")
 		return
 
-	# Boardノードから現在のルールを取得（安全のためにデフォルトはTETRIS扱い）
+	# GameSettingsリソースから現在のルールを取得
 	var is_puyo_rule := false
-	if board != null and is_instance_valid(board):
-		if "current_rule" in board and "GameRule" in board:
-			# Board.GameRule.PUYO と一致するかチェック
-			is_puyo_rule = (board.current_rule == board.GameRule.PUYO)
+	if settings != null:
+		# GameSettings側で current_rule は 0:Tetris, 1:Puyo として定義されている
+		is_puyo_rule = (settings.current_rule == 1)
 
 	for _i in range(local_cells.size()):
 		var block: Node = block_scene.instantiate()
