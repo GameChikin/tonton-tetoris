@@ -68,6 +68,7 @@ var _drag_anchor: StaticBody2D
 var _drag_joint: PinJoint2D
 var _has_snapped_this_drag: bool = false
 var _is_chain_locked: bool = false
+var _is_docking_animating: bool = false
 
 
 func _ready() -> void:
@@ -89,7 +90,7 @@ func _ready() -> void:
 
 # 自身がクリックされたか判定（ロック中は無視）
 func is_clicked(mouse_pos: Vector2) -> bool:
-	if _is_chain_locked: return false
+	if _is_chain_locked or _is_docking_animating: return false
 	for block in get_children():
 		if block is CollisionShape2D:
 			if block.global_position.distance_to(mouse_pos) < 24.0:
@@ -99,7 +100,7 @@ func is_clicked(mouse_pos: Vector2) -> bool:
 
 # ドラッグ開始（Boardからも呼ばれる）
 func start_drag(mouse_pos: Vector2) -> void:
-	if _is_chain_locked: return
+	if _is_chain_locked or _is_docking_animating: return
 	_is_dragging_by_player = true
 	_has_snapped_this_drag = false
 	
@@ -154,6 +155,10 @@ func _input(event: InputEvent) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	# アニメーション中は物理補正やドラッグ判定を完全に停止する
+	if _is_docking_animating:
+		return
+		
 	if _is_locked:
 		# プレイヤーがドラッグ中の場合、ジョイントのアンカーをマウス座標へ追従させる
 		if _is_dragging_by_player:

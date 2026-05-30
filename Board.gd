@@ -24,6 +24,7 @@ var effect_manager: EffectManager
 var score_manager: Node
 var _is_resolving: bool = false
 var _line_timers: Dictionary = {}
+var _auto_dock_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -284,6 +285,15 @@ func _find_puyo_matches() -> Array[Node]:
 
 
 func _physics_process(delta: float) -> void:
+	# 毎フレーム、物理演算の前に画面外のゴミ掃除を実行する
+	_cleanup_out_of_bounds()
+	
+	# 【ステップ3】低頻度自動ドッキングスキャン（処理負荷軽減のため0.2秒間隔で実行）
+	_auto_dock_timer += delta
+	if _auto_dock_timer >= 0.2:
+		_auto_dock_timer = 0.0
+		_scan_for_auto_docking()
+	
 	if _is_resolving:
 		return
 
@@ -872,6 +882,10 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 		if is_instance_valid(effect_manager) and effect_manager.has_method("play_snap_particles"):
 			effect_manager.play_snap_particles(source_blocks[0].global_position)
 
+		# 解除: アニメーションが完全終了したので、結合先の排他ロックを解除して物理演算や次の結合を許可する
+		if is_instance_valid(target_tet):
+			target_tet.set("_is_docking_animating", false)
+
 		# 全て完了してから抜け殻を安全に破棄
 		if is_instance_valid(source_tet):
 			source_tet.queue_free()
@@ -933,3 +947,47 @@ func _draw() -> void:
 			for pt in points:
 				var local_pos = to_local(pt.pos)
 				draw_string(font, local_pos + Vector2(0, -20), pt.reason, HORIZONTAL_ALIGNMENT_CENTER, -1, 14, Color.RED)
+
+
+# 盤面上の非操作ブロック同士を監視し、条件を満たせば自動結合を発火させる（ステップ2）
+func _scan_for_auto_docking() -> void:
+	if _is_resolving:
+		return
+
+	for child in get_children():
+		if child is Tetromino and child.get("_is_locked"):
+			# 自分自身がドラッグ中、アニメーション中、または連鎖ロック中ならスキップ
+			if child.get("_is_dragging_by_player") or child.get("_is_docking_animating") or child.get("_is_chain_locked"):
+				continue
+				
+			# 既存の優秀な吸着判定ロジックを流用して周囲を評価
+			var eval = _evaluate_docking(child)
+			if eval.can_dock and is_instance_valid(eval.target_tet):
+				var target_tet = eval.target_tet
+				
+				# 相手側もドラッグ中、アニメーション中、または連鎖ロック中ならスキップして競合を防ぐ
+				if target_tet.get("_is_dragging_by_player") or target_tet.get("_is_docking_animating") or target_tet.get("_is_chain_locked"):
+					continue
+					
+				# 【仕様確保】結合後の合計ブロック数が 4つ以下 になる場合のみ自動結合を許可
+				var total_blocks = child.blocks.size() + target_tet.blocks.size()
+				if total_blocks <= 4:
+					# アニメーション中の多重処理（クラッシュ原因）を防ぐため、双方に即座に排他ロックをかける
+					child.set("_is_docking_animating", true)
+					target_tet.set("_is_docking_animating", true)
+					
+					# 結合処理を実行
+					var physics_frame = get_node_or_null("BoardPhysicsFrame")
+					var frame_origin = physics_frame.global_position if physics_frame else Vector2.ZERO
+					_execute_docking(child, target_tet, eval.source_blocks, eval.target_cells, eval.target_data, frame_origin)
+					return # 1フレーム中の安全のため、1組結合したらスキャンを抜ける
+
+
+# 画面外に落ちてしまったテトリミノを検知して破棄するガベージコレクション
+func _cleanup_out_of_bounds() -> void:
+	var kill_y_threshold: float = 1500.0 # 画面外と判定するY座標のデッドゾーン
+	for child in get_children():
+		if child is Tetromino:
+			# 画面外はるか下方に落ちたオブジェクトを破棄
+			if child.global_position.y > kill_y_threshold:
+				child.queue_free()
