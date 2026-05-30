@@ -662,6 +662,11 @@ func _detach_and_recreate_blocks(blocks: Array[Node]) -> void:
 			new_tet.add_child(new_block)
 		
 		add_child(new_tet)
+		
+		# 修正: 分離・独立させた直後に内部配列(blocks, local_cells)を再構築し、不正オブジェクトになるのを防ぐ
+		if new_tet.has_method("_rebuild_internal_arrays"):
+			new_tet._rebuild_internal_arrays()
+			
 		block.queue_free()
 
 
@@ -712,8 +717,15 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 		"debug_points": []
 	}
 	
-	if not is_instance_valid(source_tet) or source_tet.blocks.is_empty():
-		result.reason = "Invalid source"
+	# デバッグのため判定を分割して詳細なログを出す
+	if not is_instance_valid(source_tet):
+		result.reason = "Invalid source (null or freed)"
+		print("[Debug Docking] 失敗: 掴んだ対象(source_tet)が既に破棄されているか無効です。")
+		return result
+		
+	if source_tet.blocks.is_empty():
+		result.reason = "Invalid source (blocks is empty)"
+		print("[Debug Docking] 致命的失敗: 掴んだ対象の blocks 配列が空っぽです！(分離時の自己修復漏れの可能性大)")
 		return result
 		
 	var physics_frame = get_node_or_null("BoardPhysicsFrame")
@@ -771,6 +783,7 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 
 	if candidate_matches.is_empty():
 		result.reason = "Too Far or Color Mismatch"
+		print("[Debug Docking] 失敗: 有効距離内に結合候補が存在しないか、同色条件を満たしていません。")
 		return result
 		
 	# 2. 近い順に最優先で評価されるようソートを実行
@@ -835,6 +848,7 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 
 	if result.reason == "":
 		result.reason = "All Candidates Blocked"
+		print("[Debug Docking] 失敗: 候補はありましたが、周囲に十分な空きマスがない等の理由で全てブロックされました。")
 	return result
 
 func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_blocks: Array, target_cells: Array, target_data: Dictionary, frame_origin: Vector2) -> bool:
@@ -969,9 +983,9 @@ func _scan_for_auto_docking() -> void:
 				if target_tet.get("_is_dragging_by_player") or target_tet.get("_is_docking_animating") or target_tet.get("_is_chain_locked"):
 					continue
 					
-				# 【仕様確保】結合後の合計ブロック数が 4つ以下 になる場合のみ自動結合を許可
+				# 【仕様確保】結合後の合計ブロック数が設定値以下になる場合のみ自動結合を許可
 				var total_blocks = child.blocks.size() + target_tet.blocks.size()
-				if total_blocks <= 4:
+				if total_blocks <= settings.max_auto_dock_blocks:
 					# アニメーション中の多重処理（クラッシュ原因）を防ぐため、双方に即座に排他ロックをかける
 					child.set("_is_docking_animating", true)
 					target_tet.set("_is_docking_animating", true)

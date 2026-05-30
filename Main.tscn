@@ -27,7 +27,6 @@ position = Vector2(160, 320)
 [node name="Board" type="Node2D" parent="." unique_id=1510623832]
 script = ExtResource("2_f63ok")
 docking_distance_threshold = 60.0
-show_debug_docking = true
 
 [node name="BoardPhysicsFrame" type="AnimatableBody2D" parent="Board" unique_id=1727947734]
 scale = Vector2(1, 0.9967025)

@@ -21,6 +21,7 @@ class_name GameSettings
 @export var snap_x_limit: float = 12.0
 @export var magnetic_snap_radius: float = 48.0
 @export var magnetic_snap_duration: float = 0.2
+@export var max_auto_dock_blocks: int = 4
 
 @export_group("AI Settings")
 @export var ai_enabled: bool = true
@@ -45,6 +46,7 @@ func print_all_settings() -> void:
 	print("snap_rotation_limit: ", snap_rotation_limit)
 	print("snap_x_strength: ", snap_x_strength)
 	print("snap_x_limit: ", snap_x_limit)
+	print("max_auto_dock_blocks: ", max_auto_dock_blocks)
 	
 	print("[AI Settings]")
 	print("ai_enabled: ", ai_enabled)

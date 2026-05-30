@@ -5,11 +5,11 @@
 [resource]
 script = ExtResource("1_pynj7")
 current_rule = 1
-line_clear_hold_time = 1.0
 chain_interval_time = 0.35
 snap_rotation_strength = 5.0
 snap_x_strength = 3.0
 snap_x_limit = 5.0
-magnetic_snap_duration = 1.0
+magnetic_snap_radius = 40.0
+max_auto_dock_blocks = 8
 ai_action_delay = 1.0
 drop_center_offset = 80.0
