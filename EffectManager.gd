@@ -12,6 +12,7 @@ var camera: Camera2D
 var _base_offset: Vector2 = Vector2.ZERO
 var _line_clear_queue: Array[Node] = []
 @export var flash_rect_path: NodePath
+@export var snap_particle_scene: PackedScene
 var _flash_rect: ColorRect
 
 
@@ -95,21 +96,39 @@ func play_line_clear_effect(block_node: Node) -> void:
 
 
 func play_line_blink(blocks: Array[Node]) -> void:
+	print("[Debug: EffectManager] play_line_blink 開始。渡されたブロック数: ", blocks.size())
 	if blocks.is_empty():
 		return
+		
+	var valid_color_rects: Array[ColorRect] = []
+	for block in blocks:
+		if is_instance_valid(block):
+			var cr = block.get_node_or_null("ColorRect") as ColorRect
+			if is_instance_valid(cr):
+				valid_color_rects.append(cr)
+				
+	print("[Debug: EffectManager] 抽出されたColorRect数: ", valid_color_rects.size())
+	if valid_color_rects.is_empty():
+		return
+		
 	var tween := create_tween()
+	# ポーズ中（連鎖インターバル中）でも確実にTweenを進行させる明示的な設定
+	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	
 	var blink_duration := 0.08
 	var blink_count := 3
 	for i in range(blink_count):
-		for block in blocks:
-			if is_instance_valid(block) and block is CanvasItem:
-				tween.parallel().tween_property(block, "modulate:a", 0.2, blink_duration)
+		for cr in valid_color_rects:
+			if is_instance_valid(cr):
+				tween.parallel().tween_property(cr, "modulate:a", 0.2, blink_duration)
 		tween.chain()
-		for block in blocks:
-			if is_instance_valid(block) and block is CanvasItem:
-				tween.parallel().tween_property(block, "modulate:a", 1.0, blink_duration)
+		for cr in valid_color_rects:
+			if is_instance_valid(cr):
+				tween.parallel().tween_property(cr, "modulate:a", 1.0, blink_duration)
 		tween.chain()
+		
 	await tween.finished
+	print("[Debug: EffectManager] play_line_blink Tween終了")
 
 func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 	if blocks.is_empty():
@@ -168,3 +187,154 @@ func _set_blocks_alpha(rects: Array[ColorRect], alpha: float) -> void:
 	for cr in rects:
 		if is_instance_valid(cr):
 			cr.modulate.a = alpha
+
+
+class ShockwaveNode extends Node2D:
+	var current_radius: float = 0.0
+	var max_radius: float = 0.0
+	var fill_alpha: float = 0.3
+	var wave_color: Color = Color.WHITE
+
+	func _process(_delta: float) -> void:
+		queue_redraw()
+
+	func _draw() -> void:
+		if max_radius <= 0:
+			return
+
+		var progress = clampf(current_radius / max_radius, 0.0, 1.0)
+
+		# 塗りつぶし円
+		var fill_c = wave_color
+		fill_c.a = fill_alpha * (1.0 - progress)
+		draw_circle(Vector2.ZERO, current_radius, fill_c)
+
+		# 波紋（外枠線）
+		var line_c = wave_color
+		line_c.a = 1.0 - progress
+		draw_arc(Vector2.ZERO, current_radius, 0, TAU, 32, line_c, 3.0)
+
+
+func play_shockwave_effect(center: Vector2, max_radius: float) -> void:
+	var settings: GameSettings = preload("res://game_settings.tres")
+	var alpha: float = 0.3
+	if settings != null and settings.get("shockwave_fill_alpha") != null:
+		alpha = settings.shockwave_fill_alpha
+
+	# 1. 波紋ノードの生成
+	var wave := ShockwaveNode.new()
+	wave.max_radius = max_radius
+	wave.fill_alpha = alpha
+	wave.global_position = center
+	add_child(wave)
+
+	# 2. はじけるパーティクルの生成
+	var particles := CPUParticles2D.new()
+	particles.emitting = false
+	particles.one_shot = true
+	particles.explosiveness = 0.95
+	particles.lifetime = 0.6
+	particles.direction = Vector2.ZERO
+	particles.spread = 180.0
+	particles.gravity = Vector2(0, 400)
+	particles.initial_velocity_min = 150.0
+	particles.initial_velocity_max = 300.0
+	particles.scale_amount_min = 3.0
+	particles.scale_amount_max = 6.0
+	particles.color = Color(1.2, 1.2, 1.2, 1.0) # 少し発光させる
+	particles.global_position = center
+	add_child(particles)
+
+	# アニメーションと発射の開始
+	particles.emitting = true
+	var tween := create_tween()
+	tween.tween_property(wave, "current_radius", max_radius, 0.4).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+	# 演出終了後にノードを安全に破棄
+	var timer_tween := create_tween()
+	timer_tween.tween_interval(0.7)
+	timer_tween.tween_callback(func():
+		if is_instance_valid(wave):
+			wave.queue_free()
+		if is_instance_valid(particles):
+			particles.queue_free()
+	)
+
+
+class ImplosionNode extends Node2D:
+	var current_radius: float = 0.0
+	var max_radius: float = 0.0
+	var fill_alpha: float = 0.3
+	var wave_color: Color = Color.WHITE
+
+	func _process(_delta: float) -> void:
+		queue_redraw()
+
+	func _draw() -> void:
+		if max_radius <= 0:
+			return
+		
+		# current_radius が max_radius(開始) から 0(終了) へ縮む
+		var progress = 1.0 - clampf(current_radius / max_radius, 0.0, 1.0)
+
+		# 塗りつぶし円（中心に向かってエネルギーが凝縮されるように徐々に濃く）
+		var fill_c = wave_color
+		fill_c.a = fill_alpha * progress
+		draw_circle(Vector2.ZERO, current_radius, fill_c)
+
+		# 収縮するリング
+		var line_c = wave_color
+		line_c.a = 1.0 - progress * 0.4
+		draw_arc(Vector2.ZERO, current_radius, 0, TAU, 32, line_c, 2.5)
+
+
+func play_implosion_effect(center: Vector2, max_radius: float, duration: float) -> void:
+	var settings: GameSettings = preload("res://game_settings.tres")
+	var alpha: float = 0.25
+	if settings != null and settings.get("shockwave_fill_alpha") != null:
+		alpha = settings.shockwave_fill_alpha
+
+	var wave := ImplosionNode.new()
+	wave.max_radius = max_radius
+	wave.current_radius = max_radius
+	wave.fill_alpha = alpha
+	wave.global_position = center
+	add_child(wave)
+
+	var tween := create_tween()
+	# ポーズ中（連鎖インターバル中）でも確実にTweenを進行させる
+	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	
+	# 半径を最大から0へ収縮させる（設定されたインターバル時間と同期）
+	tween.tween_property(wave, "current_radius", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
+	
+	await tween.finished
+	if is_instance_valid(wave):
+		wave.queue_free()
+
+
+# 吸着成功時に呼び出されるジューシーなパーティクルエフェクト
+func play_snap_particles(pos: Vector2) -> void:
+	# ハードコードを廃止し、インスペクターからアサインされたシーンを安全に評価する
+	if snap_particle_scene == null:
+		return
+		
+	var particles = snap_particle_scene.instantiate()
+	if not is_instance_valid(particles):
+		return
+		
+	particles.global_position = pos
+
+	if particles.has_method("set_emitting"):
+		particles.emitting = true
+
+	add_child(particles)
+
+	if particles.has_signal("finished"):
+		await particles.finished
+		if is_instance_valid(particles):
+			particles.queue_free()
+	else:
+		await get_tree().create_timer(1.0, false).timeout
+		if is_instance_valid(particles):
+			particles.queue_free()

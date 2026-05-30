@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://dpoehjdknbpis" path="res://BoardPresetManager.gd" id="5_qx0w2"]
 [ext_resource type="Script" uid="uid://dq60hjaa7q5s7" path="res://ScoreManager.gd" id="6_3dxm6"]
 [ext_resource type="PackedScene" uid="uid://lv3tdjpxiehe" path="res://score_popup.tscn" id="7_lgr22"]
+[ext_resource type="PackedScene" uid="uid://rat28ba86mqx" path="res://snap_particles.tscn" id="7_wkp8b"]
 [ext_resource type="Script" uid="uid://bkuj0rdthx5ss" path="res://AIController.gd" id="8_trn2v"]
 [ext_resource type="Script" uid="uid://bkpi8cgk10jyn" path="res://BoardPhysicsFrame.gd" id="9_bframe"]
 
@@ -25,7 +26,8 @@ position = Vector2(160, 320)
 
 [node name="Board" type="Node2D" parent="." unique_id=1510623832]
 script = ExtResource("2_f63ok")
-tonton_drop_speed = 0.2
+docking_distance_threshold = 60.0
+show_debug_docking = true
 
 [node name="BoardPhysicsFrame" type="AnimatableBody2D" parent="Board" unique_id=1727947734]
 scale = Vector2(1, 0.9967025)
@@ -81,6 +83,7 @@ script = ExtResource("3_pv0mk")
 shake_intensity = 20.0
 shake_duration = 0.25
 flash_rect_path = NodePath("../FlashLayer/FlashRect")
+snap_particle_scene = ExtResource("7_wkp8b")
 
 [node name="FlashLayer" type="CanvasLayer" parent="." unique_id=1894259145]
 layer = 10

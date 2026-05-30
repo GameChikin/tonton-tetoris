@@ -8,6 +8,9 @@ class_name GameSettings
 @export var clear_threshold: int = 8
 @export var line_clear_hold_time: float = 1.5
 @export var board_width_px: float = 320.0
+@export var shockwave_radius: float = 96.0
+@export var shockwave_fill_alpha: float = 0.3
+@export var chain_interval_time: float = 0.3
 
 @export_group("Tetromino Physics & Snap")
 @export var sleep_threshold_velocity: float = 15.0
@@ -16,6 +19,8 @@ class_name GameSettings
 @export var snap_rotation_limit: float = 25.0
 @export var snap_x_strength: float = 8.0
 @export var snap_x_limit: float = 12.0
+@export var magnetic_snap_radius: float = 48.0
+@export var magnetic_snap_duration: float = 0.2
 
 @export_group("AI Settings")
 @export var ai_enabled: bool = true

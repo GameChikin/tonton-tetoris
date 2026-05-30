@@ -14,9 +14,27 @@ func _ready() -> void:
 	_label = get_node_or_null(score_label_path) as Label
 	_update_label()
 
-func add_score_for_lines(lines_cleared: int, popup_position: Vector2) -> void:
-	if lines_cleared <= 0:
+func add_score(rule: int, data: Dictionary, popup_position: Vector2) -> void:
+	var earned_score: int = 0
+	
+	if rule == 0: # Tetris
+		earned_score = _calculate_tetris_score(data)
+	elif rule == 1: # Puyo (将来の拡張用)
+		earned_score = _calculate_puyo_score(data)
+		
+	if earned_score <= 0:
 		return
+		
+	current_score += earned_score
+	_spawn_popup(earned_score, popup_position)
+	_animate_score()
+
+
+func _calculate_tetris_score(data: Dictionary) -> int:
+	var lines_cleared: int = data.get("lines", 0)
+	var chain: int = data.get("chain", 1)
+	if lines_cleared <= 0:
+		return 0
 		
 	var multiplier: float = 1.0
 	if lines_cleared < line_multipliers.size():
@@ -24,11 +42,17 @@ func add_score_for_lines(lines_cleared: int, popup_position: Vector2) -> void:
 	else:
 		multiplier = line_multipliers[line_multipliers.size() - 1]
 		
-	var earned_score: int = int(base_score_per_line * lines_cleared * multiplier)
-	current_score += earned_score
+	return int(base_score_per_line * lines_cleared * multiplier * chain)
+
+
+func _calculate_puyo_score(data: Dictionary) -> int:
+	var puyo_count: int = data.get("puyo_count", 0)
+	var chain: int = data.get("chain", 1)
+	if puyo_count <= 0:
+		return 0
 	
-	_spawn_popup(earned_score, popup_position)
-	_animate_score()
+	# ぷよ基本スコア: 消去数 * 10 に連鎖倍率を適用
+	return puyo_count * 10 * chain
 
 func _spawn_popup(earned: int, pos: Vector2) -> void:
 	if popup_scene == null:
@@ -50,7 +74,11 @@ func _spawn_popup(earned: int, pos: Vector2) -> void:
 	var tween := create_tween()
 	tween.tween_property(popup, "position:y", pos.y - 50.0, 1.0).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
 	tween.parallel().tween_property(popup, "modulate:a", 0.0, 1.0).set_ease(Tween.EASE_IN)
-	tween.tween_callback(popup.queue_free)
+	# 確実な破棄処理（安全性向上）
+	tween.tween_callback(func():
+		if is_instance_valid(popup):
+			popup.queue_free()
+	)
 
 func _animate_score() -> void:
 	if _label == null:
