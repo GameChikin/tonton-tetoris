@@ -814,6 +814,7 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 				
 		if not found_empty_adjacent:
 			result.debug_points.append({"pos": t_data.pos, "reason": "No Space"})
+			print("[Debug Docking] 候補除外 (No Space): 結合先候補の周囲4方向に空きマスがありません。対象座標=", t_data.pos)
 			continue # 次の次点ペアの検証へフォールバック
 
 		var relative_cell_offsets = []
@@ -835,6 +836,7 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 			final_target_cells.append(cell)
 				
 		if has_overlap:
+			print("[Debug Docking] 候補除外 (Overlap): 結合予定地に既に別のブロックが存在します。")
 			continue # 次の次点ペアの検証へフォールバック
 
 		# すべてのパズル空間チェックを通過したため吸着を確定する
@@ -888,13 +890,17 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 		tween.tween_property(block, "position", exact_local_pos, anim_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 		tween.tween_property(block, "rotation", 0.0, anim_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
+	# クラッシュ対策：アニメーション中にオブジェクトが破棄される可能性を考慮し、事前にエフェクト再生用の座標をキャッシュしておく
+	var snap_effect_pos = source_blocks[0].global_position if not source_blocks.is_empty() else Vector2.ZERO
+
 	# アニメーション完了後の処理を遅延実行
 	tween.chain().tween_callback(func():
 		if is_instance_valid(target_tet) and target_tet.has_method("_rebuild_internal_arrays"):
 			target_tet._rebuild_internal_arrays()
 
-		if is_instance_valid(effect_manager) and effect_manager.has_method("play_snap_particles"):
-			effect_manager.play_snap_particles(source_blocks[0].global_position)
+		# キャッシュした安全な座標を用いてエフェクトを再生
+		if is_instance_valid(effect_manager) and effect_manager.has_method("play_snap_particles") and snap_effect_pos != Vector2.ZERO:
+			effect_manager.play_snap_particles(snap_effect_pos)
 
 		# 解除: アニメーションが完全終了したので、結合先の排他ロックを解除して物理演算や次の結合を許可する
 		if is_instance_valid(target_tet):

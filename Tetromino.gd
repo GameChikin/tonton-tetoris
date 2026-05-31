@@ -482,6 +482,10 @@ func _rebuild_internal_arrays() -> void:
 			# 現在のローカル座標からグリッドマス目を逆算して登録
 			var cell = Vector2i(round(child.position.x / 32.0), round(child.position.y / 32.0)) - pivot
 			local_cells.append(cell)
+			
+	# ガベージコレクション：ブロックをすべて失って空箱になった場合、自身を安全に破棄する
+	if blocks.is_empty() and not is_queued_for_deletion():
+		queue_free()
 
 
 # ブロックが消去や奪取によって自身から離れる直前に呼ばれる
