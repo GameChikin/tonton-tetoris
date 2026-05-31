@@ -1130,3 +1130,24 @@ func _apply_dynamic_board_size() -> void:
 		right_shape.shape = right_rect
 		right_shape.position = Vector2(pixel_width + wall_thickness / 2.0, pixel_height / 2.0)
 		physics_frame.call_deferred("add_child", right_shape)
+
+
+func check_deadline_exceeded(y_threshold: float) -> bool:
+	for child in get_children():
+		if child is Tetromino and child.get("_is_locked"):
+			# プレイヤーが操作中のブロックや、ドッキングアニメーション中のものは除外
+			var is_dragging = child.get("_is_dragging_by_player") if "_is_dragging_by_player" in child else false
+			var is_animating = child.get("_is_docking_animating") if "_is_docking_animating" in child else false
+			if is_dragging or is_animating:
+				continue
+
+			# 速度がほぼゼロ（物理的に静止している）ブロックのみを判定対象とする
+			var v_len = child.linear_velocity.length()
+			var a_len = abs(child.angular_velocity)
+			if v_len < 10.0 and a_len < 2.0:
+				for block in child.get_children():
+					if block is CollisionShape2D and not block.disabled:
+						# Godotでは画面上部に行くほどY座標が小さくなる
+						if block.global_position.y < y_threshold:
+							return true
+	return false

@@ -10,6 +10,10 @@ var board: Board
 var effect_manager: EffectManager
 var active_tetromino: Tetromino
 var _is_busy: bool = false
+var game_settings: GameSettings = preload("res://game_settings.tres")
+var deadline_line: Line2D
+var warning_rect: ColorRect
+var game_over_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -31,6 +35,22 @@ func _ready() -> void:
 	# AIControllerが存在する場合、Mainの参照を渡してセットアップを実行
 	if is_instance_valid(ai_controller):
 		ai_controller.setup(self)
+
+	deadline_line = get_node_or_null("DeadlineLine")
+	warning_rect = get_node_or_null("WarningRect")
+
+	# 警告線の初期設定 (Y=0を基準に生成。位置は_processで動的に更新する)
+	if is_instance_valid(deadline_line):
+		deadline_line.clear_points()
+		deadline_line.add_point(Vector2(-5000, 0))
+		deadline_line.add_point(Vector2(5000, 0))
+		deadline_line.default_color = Color(1.0, 0.2, 0.2, 0.8) # 薄い赤色
+		deadline_line.width = 4.0
+		
+	# 警告背景の初期設定
+	if is_instance_valid(warning_rect):
+		warning_rect.size = Vector2(10000, 5000)
+		warning_rect.color = Color(1.0, 0.0, 0.0, 0.0) # 透明
 
 
 func _input(event: InputEvent) -> void:
@@ -64,6 +84,48 @@ func _spawn_tetromino() -> void:
 
 	add_child(instance)
 	active_tetromino = instance
+
+
+func _process(delta: float) -> void:
+	if _is_busy:
+		return
+		
+	if is_instance_valid(board) and board.has_method("check_deadline_exceeded"):
+		var threshold_offset = 0.0
+		var grace = 2.0
+		# 追加したクラス変数から直接安全に読み取る
+		if is_instance_valid(game_settings):
+			threshold_offset = game_settings.game_over_y_threshold
+			grace = game_settings.game_over_grace_period
+			
+		var ref_node = board.get_node_or_null("BoardPhysicsFrame")
+		if not ref_node:
+			ref_node = board
+			
+		# 現在のデッドラインの絶対Y座標
+		var current_deadline_y = ref_node.global_position.y + threshold_offset
+		
+		# UIの追従
+		if is_instance_valid(deadline_line):
+			deadline_line.global_position = Vector2(0, current_deadline_y)
+		if is_instance_valid(warning_rect):
+			warning_rect.global_position = Vector2(-5000, current_deadline_y - 5000)
+			
+		# 判定
+		if board.check_deadline_exceeded(current_deadline_y):
+			game_over_timer += delta
+			if is_instance_valid(warning_rect):
+				var warning_alpha = clamp(game_over_timer / grace, 0.0, 1.0) * 0.4
+				warning_rect.color = Color(1.0, 0.0, 0.0, warning_alpha)
+				
+			if game_over_timer >= grace:
+				if is_instance_valid(warning_rect):
+					warning_rect.color = Color(1.0, 0.0, 0.0, 0.6)
+				game_over()
+		else:
+			game_over_timer = 0.0
+			if is_instance_valid(warning_rect):
+				warning_rect.color = Color(1.0, 0.0, 0.0, 0.0)
 
 
 func _on_active_tetromino_locked() -> void:
@@ -106,3 +168,35 @@ func load_preset_board(preset_matrix: Array) -> void:
 		board.force_set_grid_from_data(preset_matrix)
 
 	_spawn_tetromino()
+
+
+func game_over() -> void:
+	if _is_busy: return
+	_is_busy = true
+	
+	if is_instance_valid(active_tetromino):
+		active_tetromino.pause_input()
+		active_tetromino.freeze = true
+		
+	var final_score = 0
+	var max_chain = 0
+	var score_mgr = get_node_or_null("ScoreManager")
+	if is_instance_valid(score_mgr):
+		final_score = score_mgr.current_score
+		if score_mgr.has_method("get_max_chain"):
+			max_chain = score_mgr.get_max_chain()
+			
+	SaveManager.update_score(final_score, max_chain)
+	
+	# リザルトUIの表示（存在する場合）
+	var result_ui = get_node_or_null("ResultUI")
+	if is_instance_valid(result_ui):
+		result_ui.show()
+		if result_ui.has_method("show_result"):
+			result_ui.show_result(final_score, max_chain, SaveManager.high_score)
+
+func retry_game() -> void:
+	get_tree().reload_current_scene()
+
+func go_to_title() -> void:
+	get_tree().change_scene_to_file("res://Title.tscn")

@@ -15,3 +15,5 @@ magnetic_snap_radius = 40.0
 max_auto_dock_blocks = 8
 ai_action_delay = 1.0
 drop_center_offset = 80.0
+game_over_y_threshold = 200.0
+game_over_grace_period = 1.5

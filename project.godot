@@ -11,9 +11,13 @@ config_version=5
 [application]
 
 config/name="tontonTetoris"
-run/main_scene="res://Main.tscn"
+run/main_scene="uid://drqfaiu4ds7hu"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
+
+[autoload]
+
+SaveManager="*uid://4is0fe1u5qho"
 
 [editor]
 

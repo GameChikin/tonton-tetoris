@@ -9,6 +9,7 @@ class_name ScoreManager
 var current_score: int = 0
 var displayed_score: int = 0
 var _label: Label
+var current_max_chain: int = 0
 
 func _ready() -> void:
 	_label = get_node_or_null(score_label_path) as Label
@@ -19,6 +20,9 @@ func add_score(rule: int, data: Dictionary, popup_position: Vector2) -> void:
 	var chain: int = 1
 	if data.has("chain"):
 		chain = data["chain"]
+		
+	if chain > current_max_chain:
+		current_max_chain = chain
 	
 	if rule == 0: # Tetris
 		earned_score = _calculate_tetris_score(data)
@@ -31,6 +35,9 @@ func add_score(rule: int, data: Dictionary, popup_position: Vector2) -> void:
 	current_score += earned_score
 	_spawn_popup(popup_position, earned_score, chain)
 	_animate_score(earned_score, chain)
+
+func get_max_chain() -> int:
+	return current_max_chain
 
 
 func _calculate_tetris_score(data: Dictionary) -> int:
