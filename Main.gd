@@ -21,6 +21,11 @@ func _ready() -> void:
 
 	board = get_node_or_null(board_path) as Board
 	effect_manager = get_node_or_null(effect_manager_path) as EffectManager
+	
+	# 連鎖完了時に保留していた新しいブロックを生成するためシグナルを接続
+	if is_instance_valid(board):
+		board.resolve_finished.connect(_spawn_tetromino)
+		
 	_spawn_tetromino()
 
 	# AIControllerが存在する場合、Mainの参照を渡してセットアップを実行
@@ -43,6 +48,10 @@ func _spawn_tetromino() -> void:
 	if _is_busy:
 		return
 	if active_tetromino != null and is_instance_valid(active_tetromino):
+		return
+		
+	# 連鎖中（スロー中）は上からの新しいブロック投下を保留する
+	if is_instance_valid(board) and board.has_method("is_chain_active") and board.is_chain_active():
 		return
 
 	var instance: Tetromino = tetromino_scene.instantiate() as Tetromino

@@ -31,6 +31,11 @@ var _auto_dock_timer: float = 0.0
 var _is_slow_motion: bool = false
 
 
+# 外部（Mainなど）から現在連鎖中かどうかを取得する
+func is_chain_active() -> bool:
+	return _is_chain_active
+
+
 func _ready() -> void:
 	# Settingsからマスのサイズを読み込む
 	if settings != null:
@@ -480,6 +485,7 @@ func _evaluate_puyo_matches(delta: float) -> void:
 
 func _execute_chain_queue(rule: int) -> void:
 	_is_chain_active = true
+	resolve_started.emit()
 	
 	while not _chain_queue.is_empty():
 		var group = _chain_queue.pop_front()
@@ -557,6 +563,13 @@ func _execute_chain_queue(rule: int) -> void:
 	# キューが空になったら連鎖を完全に終了し、カウントをリセットする
 	_is_chain_active = false
 	_current_chain_count = 0
+	
+	# フェイルセーフ：途中でブロックが消失して消去エフェクトがスキップされた場合でも、
+	# 連鎖の完全終了時には確実にスローモーションを解除してバグを防ぐ
+	print("[Debug Chain] 連鎖完了: スローモーションを強制解除します。")
+	set_board_slow_motion(false)
+	
+	resolve_finished.emit()
 
 
 func _get_group_key(group: Array) -> String:
@@ -741,12 +754,10 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 	# デバッグのため判定を分割して詳細なログを出す
 	if not is_instance_valid(source_tet):
 		result.reason = "Invalid source (null or freed)"
-		print("[Debug Docking] 失敗: 掴んだ対象(source_tet)が既に破棄されているか無効です。")
 		return result
 		
 	if source_tet.blocks.is_empty():
 		result.reason = "Invalid source (blocks is empty)"
-		print("[Debug Docking] 致命的失敗: 掴んだ対象の blocks 配列が空っぽです！(分離時の自己修復漏れの可能性大)")
 		return result
 		
 	var physics_frame = get_node_or_null("BoardPhysicsFrame")
@@ -782,14 +793,20 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 		if block is CollisionShape2D and not block.disabled:
 			source_blocks.append(block)
 
+	var is_player_dragging = source_tet.get("_is_dragging_by_player") if source_tet.has_method("get") else false
+
 	# 1. 有効距離内にあるすべてのペアを候補として収集
 	var candidate_matches = []
+	var closest_dist_for_debug = INF
+	
 	for s_block in source_blocks:
 		var s_pos = s_block.global_position
 		var s_color_id = s_block.get_meta("color_id") if s_block.has_meta("color_id") else ""
 		
 		for t_data in all_active_blocks:
 			var dist = s_pos.distance_to(t_data.pos)
+			if dist < closest_dist_for_debug: closest_dist_for_debug = dist
+			
 			if dist <= docking_distance_threshold:
 				# 色チェックフラグが有効かつ色が異なる場合は、デバッグ点のみ登録して候補から除外
 				if require_same_color and s_color_id != "" and t_data.color_id != "" and s_color_id != t_data.color_id:
@@ -804,8 +821,6 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 
 	if candidate_matches.is_empty():
 		result.reason = "Too Far or Color Mismatch"
-		# スキャンによるログスパムを防ぐためコメントアウト
-		# print("[Debug Docking] 失敗: 有効距離内に結合候補が存在しないか、同色条件を満たしていません。")
 		return result
 		
 	# 2. 近い順に最優先で評価されるようソートを実行
@@ -817,73 +832,68 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 		var s_block = match_data.source_block
 		var s_pos = s_block.global_position
 		
-		var adjacent_offsets = [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]
-		var best_target_cell = Vector2i.ZERO
-		var min_cell_dist = INF
-		var found_empty_adjacent = false
-		
-		for offset in adjacent_offsets:
-			var candidate_cell = t_data.cell + offset
-			# 物理座標ベースで結合先予定地を算出
-			var candidate_pos = t_data.pos + Vector2(offset.x * CELL_SIZE, offset.y * CELL_SIZE)
+		# 修正A: 物理的な揺れや傾きで形状が歪むのを防ぐため、
+		# Tetrominoのローカル座標を現在の回転角度（90度単位にスナップ）で回して、絶対的なマス目形状を算出する
+		var snapped_rot = 0.0
+		if is_instance_valid(source_tet) and "rotation" in source_tet:
+			snapped_rot = round(source_tet.rotation / (PI / 2.0)) * (PI / 2.0)
 			
-			var is_occupied = false
-			for other in all_active_blocks:
-				# 自身（source_blocks）は障害物として判定しない
-				if source_blocks.has(other.block): continue
-				
-				# CELL_SIZE(32)の60% = 約19.2px以内に別のブロックがいれば物理的に重なっていると判定
-				if candidate_pos.distance_to(other.pos) < CELL_SIZE * 0.6:
-					is_occupied = true
-					break
-					
-			if is_occupied:
-				continue
-				
-			var dist = s_pos.distance_to(candidate_pos)
-			if dist < min_cell_dist:
-				min_cell_dist = dist
-				best_target_cell = candidate_cell
-				found_empty_adjacent = true
-				
-		if not found_empty_adjacent:
-			result.debug_points.append({"pos": t_data.pos, "reason": "No Space"})
-			print("[Debug Docking] 候補除外 (No Space): 結合先候補の周囲4方向に空きマスがありません。対象座標=", t_data.pos)
-			continue # 次の次点ペアの検証へフォールバック
-
+		var s_local_rot = s_block.position.rotated(snapped_rot)
+		
 		var relative_cell_offsets = []
 		for b in source_blocks:
-			var rel_pos = (b.position - s_block.position)
+			var b_local_rot = b.position.rotated(snapped_rot)
+			var rel_pos = b_local_rot - s_local_rot
 			var rx = round(rel_pos.x / CELL_SIZE)
 			var ry = round(rel_pos.y / CELL_SIZE)
 			relative_cell_offsets.append(Vector2i(rx, ry))
 
-		var final_target_cells = []
-		var has_overlap = false
-		for offset in relative_cell_offsets:
-			var cell = best_target_cell + offset
-			# source側の相対配置をターゲット物理座標ベースへ変換して検証
-			var exact_global_pos = t_data.pos + Vector2((cell.x - t_data.cell.x) * CELL_SIZE, (cell.y - t_data.cell.y) * CELL_SIZE)
+		var adjacent_offsets = [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]
+		var valid_target_cells = []
+		
+		for offset in adjacent_offsets:
+			var candidate_cell = t_data.cell + offset
+			if occupied_cells.has(candidate_cell):
+				continue
+				
+			var candidate_pos = frame_origin + Vector2(candidate_cell.x * CELL_SIZE, candidate_cell.y * CELL_SIZE)
+			var dist = s_pos.distance_to(candidate_pos)
+			valid_target_cells.append({"cell": candidate_cell, "dist": dist})
 			
-			var is_occupied = false
-			for other in all_active_blocks:
-				# 自身（source_blocks）は障害物として判定しない
-				if source_blocks.has(other.block): continue
-				
-				if exact_global_pos.distance_to(other.pos) < CELL_SIZE * 0.6:
-					is_occupied = true
+		if valid_target_cells.is_empty():
+			result.debug_points.append({"pos": t_data.pos, "reason": "No Space"})
+			continue # 周囲に空きマスなし
+			
+		# 修正B: 距離が近い順に「全ての空きマス」をテストする。
+		# （1番近いマスが壁被りでダメでも、2番目のマスなら綺麗に収まるケースを救済するため）
+		valid_target_cells.sort_custom(func(a, b): return a.dist < b.dist)
+		
+		var best_target_cell = Vector2i.ZERO
+		var docked_successfully = false
+		var final_target_cells = []
+		
+		for vt in valid_target_cells:
+			var candidate_base_cell = vt.cell
+			var has_overlap = false
+			var temp_cells = []
+			
+			for offset in relative_cell_offsets:
+				var cell = candidate_base_cell + offset
+				if occupied_cells.has(cell):
+					has_overlap = true
 					break
-					
-			if is_occupied:
-				has_overlap = true
-				result.debug_points.append({"pos": exact_global_pos, "reason": "Overlap"})
-				break
-			final_target_cells.append(cell)
+				temp_cells.append(cell)
 				
-		if has_overlap:
-			print("[Debug Docking] 候補除外 (Overlap): 結合予定地に既に別のブロックが存在します。")
-			continue # 次の次点ペアの検証へフォールバック
-
+			if not has_overlap:
+				best_target_cell = candidate_base_cell
+				final_target_cells = temp_cells
+				docked_successfully = true
+				break
+				
+		if not docked_successfully:
+			result.debug_points.append({"pos": t_data.pos, "reason": "Overlap"})
+			continue # どの隣接マスに置いても全体のどこかが被ってしまう場合は次点ペアへ
+			
 		# すべてのパズル空間チェックを通過したため吸着を確定する
 		result.can_dock = true
 		result.target_tet = t_data.tet
@@ -895,7 +905,6 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 
 	if result.reason == "":
 		result.reason = "All Candidates Blocked"
-		print("[Debug Docking] 失敗: 候補はありましたが、周囲に十分な空きマスがない等の理由で全てブロックされました。")
 	return result
 
 func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_blocks: Array, target_cells: Array, target_data: Dictionary, frame_origin: Vector2) -> bool:
