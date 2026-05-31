@@ -70,8 +70,18 @@ var _has_snapped_this_drag: bool = false
 var _is_chain_locked: bool = false
 var _is_docking_animating: bool = false
 
+# スローモーション復帰用のデフォルト物理パラメータ記憶
+var _default_gravity_scale: float = 1.0
+var _default_linear_damp: float = 0.0
+var _default_angular_damp: float = 0.0
+
 
 func _ready() -> void:
+	# 初期状態の物理パラメータを記憶
+	_default_gravity_scale = gravity_scale
+	_default_linear_damp = linear_damp
+	_default_angular_damp = angular_damp
+
 	board = get_node_or_null(board_path) as Board
 	pivot = initial_pivot
 	
@@ -614,3 +624,17 @@ func _draw() -> void:
 				var p1 = block.position + edge["p1"]
 				var p2 = block.position + edge["p2"]
 				draw_line(p1, p2, thick_line_color, thick_width)
+
+
+# 演出用の疑似スローモーション（泥沼状態）を切り替える
+func set_slow_motion(is_slow: bool) -> void:
+	if is_slow:
+		# 重力を切り、極端に高い抵抗を与えて泥の中のような状態にする
+		gravity_scale = 0.0
+		linear_damp = 30.0
+		angular_damp = 30.0
+	else:
+		# 元の物理状態に復帰
+		gravity_scale = _default_gravity_scale
+		linear_damp = _default_linear_damp
+		angular_damp = _default_angular_damp

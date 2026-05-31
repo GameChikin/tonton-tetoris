@@ -4,8 +4,8 @@ class_name Board
 signal resolve_started
 signal resolve_finished
 
-const WIDTH := 10
-const HEIGHT := 20
+var WIDTH: int = 10
+var HEIGHT: int = 20
 const CELL_SIZE := 32
 
 enum GameRule { TETRIS, PUYO }
@@ -22,19 +22,36 @@ var settings: GameSettings = preload("res://game_settings.tres")
 
 var effect_manager: EffectManager
 var score_manager: Node
-var _is_resolving: bool = false
+var _chain_queue: Array = []
+var _is_chain_active: bool = false
+var _current_chain_count: int = 0
 var _line_timers: Dictionary = {}
 var _auto_dock_timer: float = 0.0
+# 現在盤面が演出用のスローモーション（泥沼状態）にあるかどうかのフラグ
+var _is_slow_motion: bool = false
 
 
 func _ready() -> void:
+	# Settingsからマスのサイズを読み込む
+	if settings != null:
+		var w = settings.get("board_width_cells")
+		var h = settings.get("board_height_cells")
+		if w != null: WIDTH = w
+		if h != null: HEIGHT = h
+
 	# Board自体は時間停止中も入力を監視するために常に動作させる
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	
+	_apply_dynamic_board_size() # ★追加：盤面サイズの自動適応
+	
 	_initialize_grid()
 	effect_manager = get_node_or_null(effect_manager_path) as EffectManager
 	if effect_manager == null:
 		effect_manager = get_parent().get_node_or_null("EffectManager") as EffectManager
 	score_manager = get_node_or_null(score_manager_path)
+	# EffectManagerの演出開始/終了に合わせて、盤面をスローモーション（泥沼状態）にするシグナルを接続
+	if is_instance_valid(effect_manager) and not effect_manager.slow_motion_requested.is_connected(set_board_slow_motion):
+		effect_manager.slow_motion_requested.connect(set_board_slow_motion)
 
 
 # ポーズ中（連鎖インターバル中）のプレイヤー介入（アクティブ連鎖）を検知する
@@ -294,8 +311,7 @@ func _physics_process(delta: float) -> void:
 		_auto_dock_timer = 0.0
 		_scan_for_auto_docking()
 	
-	if _is_resolving:
-		return
+	# 連鎖中も判定を回し続けるため、_is_resolving によるブロックを撤廃
 
 	if settings.current_rule == 0: # Tetris
 		_evaluate_tetris_lines(delta)
@@ -360,14 +376,14 @@ func _evaluate_tetris_lines(delta: float) -> void:
 
 	# いずれかの待機条件が満了したら、タイマーが動いていた全ての行を一斉に連鎖爆発に巻き込む
 	if trigger_chain:
-		var chain_groups: Array = []
 		for row_idx in current_full_rows:
 			if _line_timers.has(row_idx):
-				chain_groups.append(blocks_by_row[row_idx])
+				_chain_queue.append(blocks_by_row[row_idx])
 				_line_timers.erase(row_idx)
 				
-		if not chain_groups.is_empty():
-			_execute_chain_clear(chain_groups, 0)
+		# キューに追加後、連鎖処理が稼働していなければスタートさせる
+		if not _chain_queue.is_empty() and not _is_chain_active:
+			_execute_chain_queue(0)
 
 
 func _evaluate_puyo_matches(delta: float) -> void:
@@ -451,22 +467,23 @@ func _evaluate_puyo_matches(delta: float) -> void:
 			
 	# いずれかの待機条件が満了したら、現在待機状態にある全てのグループを連鎖に巻き込む
 	if trigger_chain:
-		var chain_groups: Array = []
 		for group in matched_groups:
 			var key = _get_group_key(group)
 			if _line_timers.has(key):
-				chain_groups.append(group)
+				_chain_queue.append(group)
 				_line_timers.erase(key)
 				
-		if not chain_groups.is_empty():
-			_execute_chain_clear(chain_groups, 1)
+		# キューに追加後、連鎖処理が稼働していなければスタートさせる
+		if not _chain_queue.is_empty() and not _is_chain_active:
+			_execute_chain_queue(1)
 
 
-func _execute_chain_clear(chain_groups: Array, rule: int) -> void:
-	_is_resolving = true
-	var chain_count := 0
+func _execute_chain_queue(rule: int) -> void:
+	_is_chain_active = true
 	
-	for group in chain_groups:
+	while not _chain_queue.is_empty():
+		var group = _chain_queue.pop_front()
+		
 		# 途中の衝撃波などで既に消去済みのブロックがないか生存確認
 		var valid_group: Array[Node] = []
 		for block in group:
@@ -476,16 +493,16 @@ func _execute_chain_clear(chain_groups: Array, rule: int) -> void:
 		if valid_group.is_empty():
 			continue
 			
-		chain_count += 1
+		_current_chain_count += 1
 		
 		# スコア加算（連鎖数 chain を含める）
 		if is_instance_valid(score_manager) and score_manager.has_method("add_score"):
 			var popup_pos: Vector2 = _calculate_center_position(valid_group)
 			var rule_data := {}
 			if rule == 0:
-				rule_data = {"lines": 1, "chain": chain_count}
+				rule_data = {"lines": 1, "chain": _current_chain_count}
 			else:
-				rule_data = {"puyo_count": valid_group.size(), "chain": chain_count}
+				rule_data = {"puyo_count": valid_group.size(), "chain": _current_chain_count}
 			score_manager.add_score(rule, rule_data, popup_pos)
 			
 		# ぷよルールの場合は衝撃波を適用
@@ -505,12 +522,12 @@ func _execute_chain_clear(chain_groups: Array, rule: int) -> void:
 		# 消去エフェクトとノード破棄の実行（現在のグループの破壊を同期待機）
 		await _do_line_clear(valid_group)
 		
-		# 次の連鎖がある場合は、時を止めて次の予兆演出とインターバル待機へ
-		if chain_count < chain_groups.size():
-			get_tree().paused = true # エフェクト終了によるポーズ解除に対抗してポーズを維持
+		# 次の連鎖がキューに積まれている場合は、スローモーションを維持して予兆演出・インターバル待機へ
+		if not _chain_queue.is_empty():
+			set_board_slow_motion(true) # エフェクト終了によるスロー解除に対抗して泥沼状態を維持
 			
 			# 1. 次に消去予定のグループを先読みして生存しているブロックを抽出
-			var next_group: Array = chain_groups[chain_count]
+			var next_group: Array = _chain_queue[0]
 			var next_valid_group: Array[Node] = []
 			for block in next_group:
 				if is_instance_valid(block) and not block.is_queued_for_deletion() and not block.disabled:
@@ -537,7 +554,9 @@ func _execute_chain_clear(chain_groups: Array, rule: int) -> void:
 				# 予兆対象がない場合の安全フォールバック待機
 				await get_tree().create_timer(interval, true, false, true).timeout
 			
-	_is_resolving = false
+	# キューが空になったら連鎖を完全に終了し、カウントをリセットする
+	_is_chain_active = false
+	_current_chain_count = 0
 
 
 func _get_group_key(group: Array) -> String:
@@ -572,8 +591,6 @@ func _do_line_clear(lines_to_clear: Array[Node]) -> void:
 	for tet in affected_tetrominos:
 		if is_instance_valid(tet) and tet.get_child_count() == 0:
 			tet.queue_free()
-
-	_is_resolving = false
 
 
 func _apply_shockwave(cleared_blocks: Array[Node], all_active_blocks: Array[Node]) -> void:
@@ -666,6 +683,10 @@ func _detach_and_recreate_blocks(blocks: Array[Node]) -> void:
 		# 修正: 分離・独立させた直後に内部配列(blocks, local_cells)を再構築し、不正オブジェクトになるのを防ぐ
 		if new_tet.has_method("_rebuild_internal_arrays"):
 			new_tet._rebuild_internal_arrays()
+			
+		# 【追加】現在盤面がスローモーション中なら、新しく生まれたブロックも即座に泥沼状態にする
+		if _is_slow_motion and new_tet.has_method("set_slow_motion"):
+			new_tet.set_slow_motion(true)
 			
 		block.queue_free()
 
@@ -783,7 +804,8 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 
 	if candidate_matches.is_empty():
 		result.reason = "Too Far or Color Mismatch"
-		print("[Debug Docking] 失敗: 有効距離内に結合候補が存在しないか、同色条件を満たしていません。")
+		# スキャンによるログスパムを防ぐためコメントアウト
+		# print("[Debug Docking] 失敗: 有効距離内に結合候補が存在しないか、同色条件を満たしていません。")
 		return result
 		
 	# 2. 近い順に最優先で評価されるようソートを実行
@@ -995,9 +1017,6 @@ func _draw() -> void:
 
 # 盤面上の非操作ブロック同士を監視し、条件を満たせば自動結合を発火させる（ステップ2）
 func _scan_for_auto_docking() -> void:
-	if _is_resolving:
-		return
-
 	for child in get_children():
 		if child is Tetromino and child.get("_is_locked"):
 			# 自分自身がドラッグ中、アニメーション中、または連鎖ロック中ならスキップ
@@ -1035,3 +1054,70 @@ func _cleanup_out_of_bounds() -> void:
 			# 画面外はるか下方に落ちたオブジェクトを破棄
 			if child.global_position.y > kill_y_threshold:
 				child.queue_free()
+
+
+# 盤面上の全テトリミノの物理スロー状態を一斉に切り替える（ステップ2）
+func set_board_slow_motion(is_slow: bool) -> void:
+	print("[Debug Board] 盤面がスローモーション要求を受信しました: is_slow = ", is_slow)
+	_is_slow_motion = is_slow
+	for child in get_children():
+		if child is Tetromino and child.has_method("set_slow_motion"):
+			child.set_slow_motion(is_slow)
+
+
+# 盤面の定数（WIDTH, HEIGHT）に基づいて、背景と物理枠（壁・床）を自動でリサイズ・再構築する
+func _apply_dynamic_board_size() -> void:
+	var pixel_width = WIDTH * CELL_SIZE
+	var pixel_height = HEIGHT * CELL_SIZE
+	
+	# 1. GameSettingsの更新（ブロックが画面外へ出たかどうかの判定用）
+	if settings != null:
+		settings.set("board_width_px", pixel_width)
+		
+	var physics_frame = get_node_or_null("BoardPhysicsFrame")
+	if physics_frame:
+		# 盤面サイズに合わせてドラッグ可能な掴み判定エリアも自動更新
+		if physics_frame.has_method("update_grab_area"):
+			physics_frame.update_grab_area(pixel_width, pixel_height)
+			
+		# 2. 実際のシーン構造に合わせた背景と枠線の自動リサイズ
+		var bg = physics_frame.get_node_or_null("BoardBackground") as ColorRect
+		if bg:
+			bg.size = Vector2(pixel_width, pixel_height)
+			bg.position = Vector2.ZERO
+			
+		var border = physics_frame.get_node_or_null("BoardBorder") as ReferenceRect
+		if border:
+			border.size = Vector2(pixel_width, pixel_height)
+			border.position = Vector2.ZERO
+			
+		# 3. 物理枠（壁・床）の自動再構築
+		for child in physics_frame.get_children():
+			if child is CollisionShape2D:
+				child.queue_free()
+				
+		var wall_thickness: float = 100.0 # 壁の厚さ
+		
+		# 床の生成
+		var floor_shape = CollisionShape2D.new()
+		var floor_rect = RectangleShape2D.new()
+		floor_rect.size = Vector2(pixel_width + wall_thickness * 2, wall_thickness)
+		floor_shape.shape = floor_rect
+		floor_shape.position = Vector2(pixel_width / 2.0, pixel_height + wall_thickness / 2.0)
+		physics_frame.call_deferred("add_child", floor_shape)
+		
+		# 左壁の生成
+		var left_shape = CollisionShape2D.new()
+		var left_rect = RectangleShape2D.new()
+		left_rect.size = Vector2(wall_thickness, pixel_height + wall_thickness * 2)
+		left_shape.shape = left_rect
+		left_shape.position = Vector2(-wall_thickness / 2.0, pixel_height / 2.0)
+		physics_frame.call_deferred("add_child", left_shape)
+		
+		# 右壁の生成
+		var right_shape = CollisionShape2D.new()
+		var right_rect = RectangleShape2D.new()
+		right_rect.size = Vector2(wall_thickness, pixel_height + wall_thickness * 2)
+		right_shape.shape = right_rect
+		right_shape.position = Vector2(pixel_width + wall_thickness / 2.0, pixel_height / 2.0)
+		physics_frame.call_deferred("add_child", right_shape)

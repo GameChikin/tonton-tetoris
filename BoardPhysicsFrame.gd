@@ -31,3 +31,9 @@ func _physics_process(_delta: float) -> void:
 		# velocityによる移動を廃止し、座標を直接指定して絶対的な追従を実現する
 		var target_pos = get_global_mouse_position() - _drag_offset
 		global_position = target_pos
+
+
+# 盤面のサイズ変更に合わせて、ドラッグ可能な領域を自動更新する
+func update_grab_area(new_width: float, new_height: float) -> void:
+	grab_area_size = Vector2(new_width, new_height)
+	grab_area_offset = Vector2(new_width / 2.0, new_height / 2.0)

@@ -2,6 +2,8 @@ extends Node
 class_name EffectManager
 
 signal shake_finished
+# 演出時の物理スローモーション（泥沼状態）を要求するシグナル
+signal slow_motion_requested(is_slow: bool)
 
 @export var camera_path: NodePath = NodePath("../Camera2D")
 @export var shake_intensity: float = 12.0
@@ -135,7 +137,8 @@ func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 		return
 
 	# 1. 時間停止（物理演算・ゲーム進行を一時ストップ）
-	get_tree().paused = true
+	print("[Debug Effect] 演出開始: スローモーション ON を要求します")
+	slow_motion_requested.emit(true)
 
 	var valid_color_rects: Array[ColorRect] = []
 	for block in blocks:
@@ -145,7 +148,8 @@ func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 				valid_color_rects.append(cr)
 
 	if valid_color_rects.is_empty():
-		get_tree().paused = false
+		print("[Debug Effect] 演出終了: スローモーション OFF を要求します")
+		slow_motion_requested.emit(false)
 		return
 
 	# 2. 画面全体のフラッシュ演出（FlashLayer）
@@ -179,7 +183,8 @@ func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 	await vanish_tween.finished
 
 	# 5. 演出完了後、時間停止を解除
-	get_tree().paused = false
+	print("[Debug Effect] 演出終了: スローモーション OFF を要求します")
+	slow_motion_requested.emit(false)
 
 
 # 点滅演出用のアルファ値一括変更ヘルパー

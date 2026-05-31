@@ -2,6 +2,10 @@ extends Resource
 class_name GameSettings
 
 @export_group("Board & Game Rules")
+## 盤面の横幅（マス数）です。数値を変更すると、壁や背景が自動でリサイズされます。
+@export var board_width_cells: int = 10
+## 盤面の高さ（マス数）です。
+@export var board_height_cells: int = 20
 @export_enum("Tetris", "Puyo") var current_rule: int = 0 # 0: Tetris, 1: Puyo
 @export var tonton_drop_speed: float = 0.02
 @export var tonton_drop_distance: int = 20
@@ -32,6 +36,8 @@ class_name GameSettings
 func print_all_settings() -> void:
 	print("=== GameSettings Current Values ===")
 	print("[Board & Game Rules]")
+	print("board_width_cells: ", board_width_cells)
+	print("board_height_cells: ", board_height_cells)
 	print("current_rule: ", "Tetris" if current_rule == 0 else "Puyo")
 	print("tonton_drop_speed: ", tonton_drop_speed)
 	print("tonton_drop_distance: ", tonton_drop_distance)
