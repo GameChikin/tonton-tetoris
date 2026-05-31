@@ -802,10 +802,22 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 		
 		for offset in adjacent_offsets:
 			var candidate_cell = t_data.cell + offset
-			if occupied_cells.has(candidate_cell):
+			# 物理座標ベースで結合先予定地を算出
+			var candidate_pos = t_data.pos + Vector2(offset.x * CELL_SIZE, offset.y * CELL_SIZE)
+			
+			var is_occupied = false
+			for other in all_active_blocks:
+				# 自身（source_blocks）は障害物として判定しない
+				if source_blocks.has(other.block): continue
+				
+				# CELL_SIZE(32)の60% = 約19.2px以内に別のブロックがいれば物理的に重なっていると判定
+				if candidate_pos.distance_to(other.pos) < CELL_SIZE * 0.6:
+					is_occupied = true
+					break
+					
+			if is_occupied:
 				continue
 				
-			var candidate_pos = frame_origin + Vector2(candidate_cell.x * CELL_SIZE, candidate_cell.y * CELL_SIZE)
 			var dist = s_pos.distance_to(candidate_pos)
 			if dist < min_cell_dist:
 				min_cell_dist = dist
@@ -819,7 +831,6 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 
 		var relative_cell_offsets = []
 		for b in source_blocks:
-			# 修正: 回転の影響を排除するため、global_positionではなくローカルのposition同士で差分を計算する
 			var rel_pos = (b.position - s_block.position)
 			var rx = round(rel_pos.x / CELL_SIZE)
 			var ry = round(rel_pos.y / CELL_SIZE)
@@ -829,9 +840,21 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 		var has_overlap = false
 		for offset in relative_cell_offsets:
 			var cell = best_target_cell + offset
-			if occupied_cells.has(cell):
+			# source側の相対配置をターゲット物理座標ベースへ変換して検証
+			var exact_global_pos = t_data.pos + Vector2((cell.x - t_data.cell.x) * CELL_SIZE, (cell.y - t_data.cell.y) * CELL_SIZE)
+			
+			var is_occupied = false
+			for other in all_active_blocks:
+				# 自身（source_blocks）は障害物として判定しない
+				if source_blocks.has(other.block): continue
+				
+				if exact_global_pos.distance_to(other.pos) < CELL_SIZE * 0.6:
+					is_occupied = true
+					break
+					
+			if is_occupied:
 				has_overlap = true
-				result.debug_points.append({"pos": t_data.pos, "reason": "Overlap"})
+				result.debug_points.append({"pos": exact_global_pos, "reason": "Overlap"})
 				break
 			final_target_cells.append(cell)
 				
@@ -861,7 +884,8 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 	var base_block = target_data.block
 	var base_cell = target_data.cell
 	
-	var tween = create_tween().set_parallel(true)
+	# 修正: target_tet が破壊されたらTweenも即座にキャンセルされるようバインド
+	var tween = create_tween().bind_node(target_tet).set_parallel(true)
 	var anim_duration = 0.15 # 吸着アニメーションの時間
 	
 	for i in range(source_blocks.size()):
@@ -905,11 +929,11 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 		# 解除: アニメーションが完全終了したので、結合先の排他ロックを解除して物理演算や次の結合を許可する
 		if is_instance_valid(target_tet):
 			target_tet.set("_is_docking_animating", false)
-
-		# 全て完了してから抜け殻を安全に破棄
-		if is_instance_valid(source_tet):
-			source_tet.queue_free()
 	)
+	
+	# 抜け殻(source_tet)は中身を移籍した直後に即座に破棄する（アニメーション完了を待たない）
+	if is_instance_valid(source_tet):
+		source_tet.queue_free()
 	
 	return true
 
