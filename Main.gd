@@ -14,6 +14,8 @@ var game_settings: GameSettings = preload("res://game_settings.tres")
 var deadline_line: Line2D
 var warning_rect: ColorRect
 var game_over_timer: float = 0.0
+var _spawn_timer: float = 0.0
+var _survival_time: float = 0.0
 
 
 func _ready() -> void:
@@ -53,13 +55,9 @@ func _ready() -> void:
 		warning_rect.color = Color(1.0, 0.0, 0.0, 0.0) # 透明
 
 
-func _input(event: InputEvent) -> void:
-	if not event.is_action_pressed("tonton"):
-		return
-	if _is_busy:
-		return
-	await _run_tonton()
-
+func _input(_event: InputEvent) -> void:
+	# トントンギミックは廃止され、_processでの入力ポーリングへ移行したため破棄
+	pass
 
 func _spawn_tetromino() -> void:
 	if tetromino_scene == null:
@@ -67,10 +65,7 @@ func _spawn_tetromino() -> void:
 		return
 	if _is_busy:
 		return
-	if active_tetromino != null and is_instance_valid(active_tetromino):
-		return
 		
-	# 連鎖中（スロー中）は上からの新しいブロック投下を保留する
 	if is_instance_valid(board) and board.has_method("is_chain_active") and board.is_chain_active():
 		return
 
@@ -79,11 +74,10 @@ func _spawn_tetromino() -> void:
 		push_warning("Main: failed to instantiate Tetromino.")
 		return
 
-	if not instance.locked_to_board.is_connected(_on_active_tetromino_locked):
-		instance.locked_to_board.connect(_on_active_tetromino_locked)
-
+	# 並列の物理落下システムへ移行：生成後、即座に物理演算を有効化して自由落下（重力とスナップの適用）を開始させる
 	add_child(instance)
-	active_tetromino = instance
+	if instance.has_method("_lock_to_board"):
+		instance._lock_to_board()
 
 
 func _process(delta: float) -> void:
@@ -93,7 +87,6 @@ func _process(delta: float) -> void:
 	if is_instance_valid(board) and board.has_method("check_deadline_exceeded"):
 		var threshold_offset = 0.0
 		var grace = 2.0
-		# 追加したクラス変数から直接安全に読み取る
 		if is_instance_valid(game_settings):
 			threshold_offset = game_settings.game_over_y_threshold
 			grace = game_settings.game_over_grace_period
@@ -102,16 +95,13 @@ func _process(delta: float) -> void:
 		if not ref_node:
 			ref_node = board
 			
-		# 現在のデッドラインの絶対Y座標
 		var current_deadline_y = ref_node.global_position.y + threshold_offset
 		
-		# UIの追従
 		if is_instance_valid(deadline_line):
 			deadline_line.global_position = Vector2(0, current_deadline_y)
 		if is_instance_valid(warning_rect):
 			warning_rect.global_position = Vector2(-5000, current_deadline_y - 5000)
 			
-		# 判定
 		if board.check_deadline_exceeded(current_deadline_y):
 			game_over_timer += delta
 			if is_instance_valid(warning_rect):
@@ -127,46 +117,45 @@ func _process(delta: float) -> void:
 			if is_instance_valid(warning_rect):
 				warning_rect.color = Color(1.0, 0.0, 0.0, 0.0)
 
-
-func _on_active_tetromino_locked() -> void:
-	active_tetromino = null
-	_spawn_tetromino()
-
-
-func _run_tonton() -> void:
-	if _is_busy:
-		return
-	_is_busy = true
-
-	if is_instance_valid(active_tetromino):
-		active_tetromino.pause_input()
-
-	if is_instance_valid(effect_manager):
-		effect_manager.shake_camera()
-
-	if is_instance_valid(board):
-		board.apply_tonton_drop()
-
-	# 物理挙動が落ち着くまでの猶予
-	await get_tree().create_timer(1.5).timeout
-
-	if is_instance_valid(active_tetromino):
-		active_tetromino.resume_input()
-
-	_is_busy = false
+	# --- スポーンタイマー処理 ---
+	if is_instance_valid(board) and board.has_method("is_chain_active") and board.is_chain_active():
+		pass # 連鎖中はスポーンをストップ
+	else:
+		_survival_time += delta
+		var current_interval = 3.0
+		var fast_forward = 0.15
+		
+		if is_instance_valid(game_settings):
+			# 0除算を防ぎつつ、難易度上昇ステップを計算
+			var safe_interval = max(1.0, game_settings.get("spawn_speedup_interval"))
+			var speedup_steps = floor(_survival_time / safe_interval)
+			var target_interval = game_settings.get("base_spawn_interval") - (speedup_steps * game_settings.get("spawn_speedup_amount"))
+			current_interval = max(target_interval, game_settings.get("min_spawn_interval"))
+			fast_forward = game_settings.get("fast_forward_spawn_interval")
+			
+		# スペースキー入力で間隔を早送りに上書き
+		if Input.is_action_pressed("tonton"):
+			current_interval = fast_forward
+			
+		_spawn_timer += delta
+		if _spawn_timer >= current_interval:
+			_spawn_timer = 0.0
+			_spawn_tetromino()
 
 
 func load_preset_board(preset_matrix: Array) -> void:
 	if _is_busy:
 		return
 
-	if active_tetromino != null and is_instance_valid(active_tetromino):
-		active_tetromino.queue_free()
-		active_tetromino = null
+	for child in get_children():
+		if child is Tetromino and not child.get("_is_locked"):
+			child.queue_free()
+	active_tetromino = null
 
 	if board != null and is_instance_valid(board):
 		board.force_set_grid_from_data(preset_matrix)
 
+	_spawn_timer = 0.0
 	_spawn_tetromino()
 
 
@@ -174,10 +163,11 @@ func game_over() -> void:
 	if _is_busy: return
 	_is_busy = true
 	
-	if is_instance_valid(active_tetromino):
-		active_tetromino.pause_input()
-		active_tetromino.freeze = true
-		
+	for child in get_children():
+		if child is Tetromino and not child.get("_is_locked"):
+			child.pause_input()
+			child.freeze = true
+			
 	var final_score = 0
 	var max_chain = 0
 	var score_mgr = get_node_or_null("ScoreManager")

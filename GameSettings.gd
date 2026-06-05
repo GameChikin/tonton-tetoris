@@ -25,6 +25,18 @@ class_name GameSettings
 ## 連鎖が発生した際、次の連鎖判定が行われるまでの間隔（秒）です。
 @export var chain_interval_time: float = 0.3
 
+@export_group("Spawn Settings")
+## ゲーム開始時のブロック生成間隔（秒）です。
+@export var base_spawn_interval: float = 3.0
+## 難易度が上がり、生成が早くなるまでの経過時間（秒）です。
+@export var spawn_speedup_interval: float = 15.0
+## 1回の難易度上昇で短縮される時間（秒）です。
+@export var spawn_speedup_amount: float = 0.2
+## 自然生成間隔の限界値（これ以上は速くならない下限値）です。
+@export var min_spawn_interval: float = 1.0
+## スペースキー（早送り）を押している間の生成間隔（秒）です。
+@export var fast_forward_spawn_interval: float = 0.15
+
 @export_group("Tetromino Physics & Snap")
 ## ブロックの移動速度がこの値を下回ると、「静止した」とみなされやすくなります。
 @export var sleep_threshold_velocity: float = 15.0

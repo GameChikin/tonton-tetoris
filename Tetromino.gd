@@ -224,16 +224,6 @@ func _physics_process(delta: float) -> void:
 			
 		return
 
-	# 操作中の自然落下のみ（プレイヤー入力は無効、AI専用）
-	if _is_input_paused:
-		return
-
-	_fall_timer += delta
-	if _fall_timer >= fall_interval:
-		_fall_timer = 0.0
-		if not _try_move(Vector2i.DOWN):
-			_lock_to_board()
-
 
 func pause_input() -> void:
 	if _is_locked:
