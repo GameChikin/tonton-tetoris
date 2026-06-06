@@ -102,20 +102,27 @@ func _process(delta: float) -> void:
 		if is_instance_valid(warning_rect):
 			warning_rect.global_position = Vector2(-5000, current_deadline_y - 5000)
 			
-		if board.check_deadline_exceeded(current_deadline_y):
-			game_over_timer += delta
-			if is_instance_valid(warning_rect):
-				var warning_alpha = clamp(game_over_timer / grace, 0.0, 1.0) * 0.4
-				warning_rect.color = Color(1.0, 0.0, 0.0, warning_alpha)
-				
-			if game_over_timer >= grace:
+		# 連鎖（ブロック破壊・スロー演出）中はゲームオーバー判定を凍結する。
+		# 理由: ライン上にブロックがある状態で連鎖が起きると、スロー中もタイマーが
+		# 加算され続け「連鎖するだけでゲームオーバー」になってしまうため。
+		# 連鎖中は game_over_timer を加算もリセットもせず保持し、通常速度に戻ってから
+		# 途中の値のまま加算を再開させる。警告色も更新しないことで、止まった瞬間の濃さで固定する。
+		var is_resolving: bool = board.has_method("is_chain_active") and board.is_chain_active()
+		if not is_resolving:
+			if board.check_deadline_exceeded(current_deadline_y):
+				game_over_timer += delta
 				if is_instance_valid(warning_rect):
-					warning_rect.color = Color(1.0, 0.0, 0.0, 0.6)
-				game_over()
-		else:
-			game_over_timer = 0.0
-			if is_instance_valid(warning_rect):
-				warning_rect.color = Color(1.0, 0.0, 0.0, 0.0)
+					var warning_alpha = clamp(game_over_timer / grace, 0.0, 1.0) * 0.4
+					warning_rect.color = Color(1.0, 0.0, 0.0, warning_alpha)
+					
+				if game_over_timer >= grace:
+					if is_instance_valid(warning_rect):
+						warning_rect.color = Color(1.0, 0.0, 0.0, 0.6)
+					game_over()
+			else:
+				game_over_timer = 0.0
+				if is_instance_valid(warning_rect):
+					warning_rect.color = Color(1.0, 0.0, 0.0, 0.0)
 
 	# --- スポーンタイマー処理 ---
 	if is_instance_valid(board) and board.has_method("is_chain_active") and board.is_chain_active():
@@ -163,11 +170,27 @@ func game_over() -> void:
 	if _is_busy: return
 	_is_busy = true
 	
+	# --- ゲームの完全停止 ---
+	# フェイルセーフ：連鎖スロー演出が残っていれば解除する
+	if is_instance_valid(board) and board.has_method("set_board_slow_motion"):
+		board.set_board_slow_motion(false)
+	# すべてのテトリミノ（ロック済みも含む）を完全停止させる
 	for child in get_children():
-		if child is Tetromino and not child.get("_is_locked"):
-			child.pause_input()
-			child.freeze = true
-			
+		if child is Tetromino and child.has_method("force_stop_for_game_over"):
+			child.force_stop_for_game_over()
+	# Board / EffectManager は通常 PROCESS_MODE_ALWAYS のため、ツリーポーズに従うよう戻す。
+	# （ALWAYS のままだとポーズ中も Board._input がドラッグを受け付けてしまう）
+	if is_instance_valid(board):
+		board.process_mode = Node.PROCESS_MODE_PAUSABLE
+	if is_instance_valid(effect_manager):
+		effect_manager.process_mode = Node.PROCESS_MODE_PAUSABLE
+	# リザルトUIだけはポーズ中も操作できるよう常時処理にする
+	var result_ui_node = get_node_or_null("ResultUI")
+	if is_instance_valid(result_ui_node):
+		result_ui_node.process_mode = Node.PROCESS_MODE_ALWAYS
+	# ツリー全体をポーズして物理・連鎖・入力を完全停止
+	get_tree().paused = true
+
 	var final_score = 0
 	var max_chain = 0
 	var score_mgr = get_node_or_null("ScoreManager")
@@ -186,7 +209,9 @@ func game_over() -> void:
 			result_ui.show_result(final_score, max_chain, SaveManager.high_score)
 
 func retry_game() -> void:
+	get_tree().paused = false
 	get_tree().reload_current_scene()
 
 func go_to_title() -> void:
+	get_tree().paused = false
 	get_tree().change_scene_to_file("res://Title.tscn")

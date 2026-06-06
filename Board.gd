@@ -29,6 +29,9 @@ var _line_timers: Dictionary = {}
 var _auto_dock_timer: float = 0.0
 # 現在盤面が演出用のスローモーション（泥沼状態）にあるかどうかのフラグ
 var _is_slow_motion: bool = false
+# ウォッチドッグ用：連鎖処理が最後に「進捗」した時刻(ms)。長い連鎖を誤って打ち切らないよう、
+# 総経過ではなく「進捗が一定時間止まったか」でハングを判定するために使う。
+var _chain_progress_msec: int = 0
 
 
 # 外部（Mainなど）から現在連鎖中かどうかを取得する
@@ -309,7 +312,9 @@ func _find_puyo_matches() -> Array[Node]:
 func _physics_process(delta: float) -> void:
 	# 毎フレーム、物理演算の前に画面外のゴミ掃除を実行する
 	_cleanup_out_of_bounds()
-	
+	# 枠を高速で振った際などに壁をすり抜けたブロックを内側へ戻す安全網
+	_contain_blocks_inside_frame()
+
 	# 【ステップ3】低頻度自動ドッキングスキャン（処理負荷軽減のため0.2秒間隔で実行）
 	_auto_dock_timer += delta
 	if _auto_dock_timer >= 0.2:
@@ -484,9 +489,15 @@ func _evaluate_puyo_matches(delta: float) -> void:
 
 
 func _execute_chain_queue(rule: int) -> void:
+	# [SlowTrace] 連鎖開始。ハング検出用にウォッチドッグを起動（awaitしない＝バックグラウンド監視）
+	var _chain_start_msec: int = Time.get_ticks_msec()
+	_chain_progress_msec = _chain_start_msec # 進捗時刻を初期化
+	print("[SlowTrace] _execute_chain_queue 開始 rule=", rule, " t=", _chain_start_msec, " queue=", _chain_queue.size(), " slow=", _is_slow_motion)
+	_chain_watchdog(_chain_start_msec)
+
 	_is_chain_active = true
 	resolve_started.emit()
-	
+
 	while not _chain_queue.is_empty():
 		var group = _chain_queue.pop_front()
 		
@@ -511,25 +522,19 @@ func _execute_chain_queue(rule: int) -> void:
 				rule_data = {"puyo_count": valid_group.size(), "chain": _current_chain_count}
 			score_manager.add_score(rule, rule_data, popup_pos)
 			
-		# ぷよルールの場合は衝撃波を適用
+		# ぷよルールの場合は衝撃波（視覚演出のみ）を適用
 		if rule == 1:
-			var active_blocks: Array[Node] = []
-			var physics_frame = get_node_or_null("BoardPhysicsFrame")
-			if physics_frame:
-				for child in get_children():
-					if child is Tetromino:
-						for block in child.get_children():
-							if block is CollisionShape2D and not block.disabled:
-								var local_pos = physics_frame.to_local(block.global_position)
-								if local_pos.x >= -4.0 and local_pos.x <= settings.board_width_px + 4.0:
-									active_blocks.append(block)
-			_apply_shockwave(valid_group, active_blocks)
+			_apply_shockwave(valid_group)
 			
 		# 消去エフェクトとノード破棄の実行（現在のグループの破壊を同期待機）
+		print("[SlowTrace] _do_line_clear 待機開始 chain=", _current_chain_count, " blocks=", valid_group.size(), " t=", Time.get_ticks_msec())
 		await _do_line_clear(valid_group)
-		
+		_chain_progress_msec = Time.get_ticks_msec() # 1段消化＝進捗あり。ウォッチドッグの誤発火を防ぐ
+		print("[SlowTrace] _do_line_clear 待機完了 chain=", _current_chain_count, " t=", _chain_progress_msec, " slow=", _is_slow_motion)
+
 		# 次の連鎖がキューに積まれている場合は、スローモーションを維持して予兆演出・インターバル待機へ
 		if not _chain_queue.is_empty():
+			print("[SlowTrace] 次連鎖あり→スロー維持 set_board_slow_motion(true) t=", Time.get_ticks_msec())
 			set_board_slow_motion(true) # エフェクト終了によるスロー解除に対抗して泥沼状態を維持
 			
 			# 1. 次に消去予定のグループを先読みして生存しているブロックを抽出
@@ -563,13 +568,37 @@ func _execute_chain_queue(rule: int) -> void:
 	# キューが空になったら連鎖を完全に終了し、カウントをリセットする
 	_is_chain_active = false
 	_current_chain_count = 0
-	
+
 	# フェイルセーフ：途中でブロックが消失して消去エフェクトがスキップされた場合でも、
 	# 連鎖の完全終了時には確実にスローモーションを解除してバグを防ぐ
+	print("[SlowTrace] 連鎖ループ脱出→解除へ到達 set_board_slow_motion(false) t=", Time.get_ticks_msec())
 	print("[Debug Chain] 連鎖完了: スローモーションを強制解除します。")
 	set_board_slow_motion(false)
-	
+
 	resolve_finished.emit()
+
+
+# 連鎖ハング検出＆自動復旧ウォッチドッグ（多重防御の安全網）。
+# 「総経過時間」ではなく「進捗が止まってからの時間」で判定するため、長い連鎖を誤って
+# 打ち切らない。進捗(_chain_progress_msec)が一定時間更新されなければハングとみなし、
+# 原因が何であれ強制的にスローを解除してゲームが永久スローで固まるのを防ぐ。
+# 本来はEffectManager側の修正で詰まらないが、将来別経路で詰まっても復帰不能にしないための保険。
+func _chain_watchdog(_start_msec: int) -> void:
+	var stall_limit_msec: int = 5000 # 進捗が5秒止まったらハングとみなす
+	while _is_chain_active:
+		await get_tree().create_timer(1.0, true, false, true).timeout
+		if not _is_chain_active:
+			return
+		var stalled: int = Time.get_ticks_msec() - _chain_progress_msec
+		if stalled >= stall_limit_msec:
+			push_error("[SlowTrace] 連鎖の進捗が%d ms停止＝ハング検出。強制復旧します。slow=%s queue=%d chain=%d" % [stalled, str(_is_slow_motion), _chain_queue.size(), _current_chain_count])
+			# 強制復旧：スローを解除し、連鎖状態をリセットして次のブロック生成を再開させる
+			set_board_slow_motion(false)
+			_is_chain_active = false
+			_current_chain_count = 0
+			_chain_queue.clear()
+			resolve_finished.emit()
+			return
 
 
 func _get_group_key(group: Array) -> String:
@@ -606,102 +635,17 @@ func _do_line_clear(lines_to_clear: Array[Node]) -> void:
 			tet.queue_free()
 
 
-func _apply_shockwave(cleared_blocks: Array[Node], all_active_blocks: Array[Node]) -> void:
+func _apply_shockwave(cleared_blocks: Array[Node]) -> void:
+	# 衝撃波は視覚演出のみ。以前あった「孤立ブロックを分離してバラバラに崩す」仕様は、
+	# ぷよルールでブロックが分解されてしまうため撤廃した（塊単位の物理落下のみとする）。
 	if cleared_blocks.is_empty():
 		return
-		
+
 	var center = _calculate_center_position(cleared_blocks)
 	var radius = settings.get("shockwave_radius") if settings.get("shockwave_radius") != null else 96.0
-	
-	# エフェクトの呼び出し
+
 	if is_instance_valid(effect_manager) and effect_manager.has_method("play_shockwave_effect"):
 		effect_manager.play_shockwave_effect(center, radius)
-	
-	var affected_blocks: Array[Node] = []
-	for block in all_active_blocks:
-		if cleared_blocks.has(block):
-			continue
-		if is_instance_valid(block) and block.global_position.distance_to(center) <= radius:
-			affected_blocks.append(block)
-			
-	var blocks_to_detach: Array[Node] = []
-	var neighbor_dist = 38.0
-	
-	for block in affected_blocks:
-		var is_isolated = true
-		var color_id = block.get_meta("color_id") if block.has_meta("color_id") else ""
-		
-		for other in all_active_blocks:
-			if block == other or cleared_blocks.has(other):
-				continue
-			if is_instance_valid(other) and other.has_meta("color_id") and other.get_meta("color_id") == color_id:
-				if block.global_position.distance_to(other.global_position) <= neighbor_dist:
-					is_isolated = false
-					break
-					
-		if is_isolated:
-			blocks_to_detach.append(block)
-			
-	if not blocks_to_detach.is_empty():
-		# 物理演算中のノードツリー変更によるエラーを防ぐため、遅延呼び出しで分離を実行
-		call_deferred("_detach_and_recreate_blocks", blocks_to_detach)
-
-
-func _detach_and_recreate_blocks(blocks: Array[Node]) -> void:
-	for block in blocks:
-		if not is_instance_valid(block) or block.is_queued_for_deletion():
-			continue
-			
-		var parent = block.get_parent()
-		if not is_instance_valid(parent) or not (parent is Tetromino):
-			continue
-			
-		var global_pos = block.global_position
-		var block_rotation = parent.rotation
-		var color_id = block.get_meta("color_id")
-		
-		# 単独ブロックとして新しいTetrominoを生成
-		var tet_scene = load("res://Tetromino.tscn") as PackedScene
-		if not tet_scene:
-			continue
-		var new_tet = tet_scene.instantiate() as Tetromino
-		
-		# シーンツリーに追加（_ready呼び出し）される前に自動生成フラグを無効化する
-		new_tet.disable_auto_spawn = true
-		
-		new_tet.global_position = global_pos
-		new_tet.rotation = block_rotation
-		new_tet.set("_is_locked", true)
-		new_tet.freeze = false # 分離後に物理落下を再開させる
-		
-		var block_scene_res = load("res://Block.tscn") as PackedScene
-		if block_scene_res:
-			var new_block = block_scene_res.instantiate()
-			new_block.set_meta("color_id", color_id)
-			
-			var current_color = Color.WHITE
-			if new_tet.TETROMINO_DATA.has(color_id):
-				var shape_def = new_tet.TETROMINO_DATA[color_id] as Dictionary
-				current_color = shape_def.get("color", Color.WHITE)
-				
-			var cr = new_block.get_node_or_null("ColorRect") as ColorRect
-			if cr:
-				cr.color = current_color
-				
-			new_block.position = Vector2.ZERO
-			new_tet.add_child(new_block)
-		
-		add_child(new_tet)
-		
-		# 修正: 分離・独立させた直後に内部配列(blocks, local_cells)を再構築し、不正オブジェクトになるのを防ぐ
-		if new_tet.has_method("_rebuild_internal_arrays"):
-			new_tet._rebuild_internal_arrays()
-			
-		# 【追加】現在盤面がスローモーション中なら、新しく生まれたブロックも即座に泥沼状態にする
-		if _is_slow_motion and new_tet.has_method("set_slow_motion"):
-			new_tet.set_slow_motion(true)
-			
-		block.queue_free()
 
 
 func _calculate_center_position(blocks: Array[Node]) -> Vector2:
@@ -908,6 +852,10 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 	return result
 
 func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_blocks: Array, target_cells: Array, target_data: Dictionary, frame_origin: Vector2) -> bool:
+	# [SlowTrace] ドッキング実行。連鎖演出中(slow=true)に発火していれば、解放されるブロックが
+	# 消去Tweenの対象と被ってハングする可能性がある。時刻と状態を記録して相関を取る。
+	print("[SlowTrace] _execute_docking 実行 src_blocks=", source_blocks.size(), " slow=", _is_slow_motion, " chain_active=", _is_chain_active, " t=", Time.get_ticks_msec())
+
 	# 1. source_tet の物理演算と入力を無効化（アニメーション中の干渉を防止）
 	source_tet.freeze = true
 	source_tet.process_mode = Node.PROCESS_MODE_DISABLED
@@ -1065,13 +1013,63 @@ func _cleanup_out_of_bounds() -> void:
 				child.queue_free()
 
 
+# 壁の外へすり抜けてしまったブロックを盤面内へ戻す封じ込め処理（多重防御の安全網）。
+# 物理対策（sync_to_physics＋移動量クランプ＋CCD）をすり抜けた例外を確実に救済する。
+# 接触時のジッタを避けるため、壁から escape_margin 以上はみ出したブロックのみ矯正する。
+func _contain_blocks_inside_frame() -> void:
+	var physics_frame = get_node_or_null("BoardPhysicsFrame")
+	if not is_instance_valid(physics_frame):
+		return
+	var width_px: float = settings.board_width_px if settings != null else float(WIDTH * CELL_SIZE)
+	var floor_y: float = float(HEIGHT * CELL_SIZE)
+	var escape_margin: float = float(CELL_SIZE)  # この距離以上はみ出したブロックのみ矯正
+	var min_x: float = 0.0
+	var max_x: float = width_px
+	for child in get_children():
+		if not (child is Tetromino):
+			continue
+		var tet := child as Tetromino
+		if not is_instance_valid(tet) or tet.is_queued_for_deletion():
+			continue
+		for block in tet.get_children():
+			if not (block is CollisionShape2D) or block.disabled:
+				continue
+			# 壁(physics_frame)のローカル座標系で内外を判定する（枠の位置・スケールに追従）
+			var local_pos: Vector2 = physics_frame.to_local(block.global_position)
+			var clamped: Vector2 = local_pos
+			var escaped: bool = false
+			if local_pos.x < min_x - escape_margin:
+				clamped.x = min_x
+				escaped = true
+			elif local_pos.x > max_x + escape_margin:
+				clamped.x = max_x
+				escaped = true
+			if local_pos.y > floor_y + escape_margin:
+				clamped.y = floor_y
+				escaped = true
+			if escaped:
+				# はみ出したブロックを内側へ戻し、暴れないよう速度を打ち消す。
+				# 個別ブロックではなく親Tetromino(剛体)を移動させて整合を保つ。
+				var target_global: Vector2 = physics_frame.to_global(clamped)
+				var correction: Vector2 = target_global - block.global_position
+				tet.global_position += correction
+				tet.linear_velocity = Vector2.ZERO
+				tet.angular_velocity = 0.0
+				break  # 1Tetrominoにつき1回矯正したら次へ（過補正を防ぎ、次フレームで収束させる）
+
+
 # 盤面上の全テトリミノの物理スロー状態を一斉に切り替える（ステップ2）
 func set_board_slow_motion(is_slow: bool) -> void:
-	print("[Debug Board] 盤面がスローモーション要求を受信しました: is_slow = ", is_slow)
-	_is_slow_motion = is_slow
+	var _tet_count: int = 0
 	for child in get_children():
 		if child is Tetromino and child.has_method("set_slow_motion"):
 			child.set_slow_motion(is_slow)
+			_tet_count += 1
+	_is_slow_motion = is_slow
+	# [SlowTrace] 呼び出し元・対象数・適用後の状態を記録（true/false の最終順序を特定するため）
+	print("[SlowTrace] set_board_slow_motion(", is_slow, ") 対象Tetromino数=", _tet_count, " t=", Time.get_ticks_msec())
+	print("[SlowTrace]   呼び出し元スタック=", get_stack())
+	print("[Debug Board] 盤面がスローモーション要求を受信しました: is_slow = ", is_slow)
 
 
 # 盤面の定数（WIDTH, HEIGHT）に基づいて、背景と物理枠（壁・床）を自動でリサイズ・再構築する

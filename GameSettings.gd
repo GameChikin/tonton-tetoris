@@ -14,6 +14,8 @@ class_name GameSettings
 @export var tonton_drop_distance: int = 20
 ## ブロックが消滅するために必要な条件です（テトリスなら横一列に必要なマス数、ぷよぷよなら隣接必要なブロック数）。
 @export var clear_threshold: int = 8
+## ブロックの抽選に使用する色の種類数です（2〜12）。多いほど同色が揃いにくく難しく、少ないほど易しくなります。
+@export_range(2, 12) var block_color_count: int = 7
 ## ブロックが揃ってから、実際に消滅（爆発）するまでの待機時間（秒）です。連鎖の演出に使われます。
 @export var line_clear_hold_time: float = 1.5
 ## 盤面の物理的な横幅（ピクセル）です。当たり判定やUIの基準サイズとして使用されます。
@@ -71,6 +73,21 @@ class_name GameSettings
 ## ブロックがデッドラインを越えてから、実際にゲームオーバーになるまでの猶予時間（秒）です。
 @export var game_over_grace_period: float = 2.0
 
+@export_group("Board Handle (Drag Grip)")
+## 盤面を掴んで動かす「持ち手（ジョッキの取っ手）」の大きさ（半径ピクセル）です。大きいほど掴みやすくなります。
+@export var handle_radius: float = 60.0
+## 持ち手（取っ手）の太さ（ピクセル）です。
+@export var handle_thickness: float = 16.0
+## 持ち手を盤面の下端からどれだけ上に配置するかの距離（ピクセル）です。0なら最下部に寄ります。
+@export var handle_bottom_margin: float = 40.0
+## 持ち手（取っ手）の表示色です。
+@export var handle_color: Color = Color(0.85, 0.65, 0.3, 1.0)
+## 枠（壁）をドラッグで動かす際の最大追従速度（px/秒）です。
+## 0 = 即時追従（クランプ無効＝マウスに最も鋭敏に反応。推奨）。
+## すり抜け防止は sync_to_physics と封じ込め安全網が担うため、通常は 0 でよい。
+## 正の値を入れた時だけ、その速度で追従を平滑化（鈍く）します。
+@export var max_frame_drag_speed: float = 0.0
+
 
 func print_all_settings() -> void:
 	print("=== GameSettings Current Values ===")
@@ -81,8 +98,10 @@ func print_all_settings() -> void:
 	print("tonton_drop_speed: ", tonton_drop_speed)
 	print("tonton_drop_distance: ", tonton_drop_distance)
 	print("clear_threshold: ", clear_threshold)
+	print("block_color_count: ", block_color_count)
 	print("line_clear_hold_time: ", line_clear_hold_time)
 	print("board_width_px: ", board_width_px)
+	print("max_frame_drag_speed: ", max_frame_drag_speed)
 	
 	print("[Tetromino Physics & Snap]")
 	print("sleep_threshold_velocity: ", sleep_threshold_velocity)

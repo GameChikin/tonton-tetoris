@@ -137,6 +137,7 @@ func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 		return
 
 	# 1. 時間停止（物理演算・ゲーム進行を一時ストップ）
+	print("[SlowTrace] play_line_vanish_and_flash 開始 blocks=", blocks.size(), " t=", Time.get_ticks_msec())
 	print("[Debug Effect] 演出開始: スローモーション ON を要求します")
 	slow_motion_requested.emit(true)
 
@@ -171,18 +172,37 @@ func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 		blink_tween.tween_callback(func(): _set_blocks_alpha(valid_color_rects, 1.0))
 		blink_tween.tween_interval(blink_duration)
 
-	await blink_tween.finished
+	# 【修正】待機はTweenの寿命ではなくタイマーで行う。
+	# 点滅対象(cr)が演出中にドッキング等で解放されてもTweenがkillされてハングしないようにする。
+	# blink_tween自体はアルファ変更の見た目を駆動するだけ（_set_blocks_alphaが生存チェック済み）。
+	var blink_total: float = blink_duration * 2.0 * float(blink_count)
+	print("[SlowTrace] blink タイマー待機前 wait=", blink_total, " t=", Time.get_ticks_msec())
+	await get_tree().create_timer(blink_total).timeout
+	print("[SlowTrace] blink タイマー待機後 t=", Time.get_ticks_msec())
 
 	# 4. 消失演出（縮小しながらフェードアウト）
-	var vanish_tween = create_tween().set_parallel(true)
+	# 【修正】有効なColorRectが1つも無ければTweenを作らない（空Tween=「started with no Tweeners」エラーの根絶）。
+	var vanish_duration: float = 0.2
+	var has_valid_cr: bool = false
 	for cr in valid_color_rects:
 		if is_instance_valid(cr):
-			vanish_tween.tween_property(cr, "scale", Vector2.ZERO, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
-			vanish_tween.tween_property(cr, "modulate:a", 0.0, 0.2)
+			has_valid_cr = true
+			break
 
-	await vanish_tween.finished
+	if has_valid_cr:
+		var vanish_tween = create_tween().set_parallel(true)
+		for cr in valid_color_rects:
+			if is_instance_valid(cr):
+				vanish_tween.tween_property(cr, "scale", Vector2.ZERO, vanish_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+				vanish_tween.tween_property(cr, "modulate:a", 0.0, vanish_duration)
 
-	# 5. 演出完了後、時間停止を解除
+	# 【修正】Tweenのfinishedを待たず、必ず時間で復帰する。これによりcrが消えてもここでハングしない。
+	print("[SlowTrace] vanish タイマー待機前 has_valid_cr=", has_valid_cr, " t=", Time.get_ticks_msec())
+	await get_tree().create_timer(vanish_duration).timeout
+	print("[SlowTrace] vanish タイマー待機後 t=", Time.get_ticks_msec())
+
+	# 5. 演出完了後、時間停止を解除（何があっても必ずここに到達する）
+	print("[SlowTrace] play_line_vanish_and_flash 正常終了→OFF要求 t=", Time.get_ticks_msec())
 	print("[Debug Effect] 演出終了: スローモーション OFF を要求します")
 	slow_motion_requested.emit(false)
 

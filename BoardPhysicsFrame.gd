@@ -1,8 +1,17 @@
 extends AnimatableBody2D
 
-@export_group("Drag Settings")
-@export var grab_area_size: Vector2 = Vector2(320.0, 640.0)
-@export var grab_area_offset: Vector2 = Vector2(160.0, 320.0)
+# 盤面を掴んで動かすための「持ち手（ジョッキの取っ手）」を管理する。
+# 以前は盤面全域が掴み判定だったため、積まれたブロックと被って意図せず掴んでしまう問題があった。
+# 盤面の右下に専用の取っ手を設け、そこだけを掴み判定にすることで誤操作を防ぐ。
+
+var settings: GameSettings = preload("res://game_settings.tres")
+
+# 掴み判定の外接矩形（取っ手の当たり判定）。update_grab_area / _rebuild_handle で算出する。
+var _grab_rect: Rect2 = Rect2()
+
+# 描画と判定の基準にする盤面サイズ（Boardから渡される）
+var _board_width: float = 320.0
+var _board_height: float = 640.0
 
 var _is_dragging: bool = false
 var _drag_offset: Vector2 = Vector2.ZERO
@@ -10,15 +19,18 @@ var _drag_offset: Vector2 = Vector2.ZERO
 
 func _ready() -> void:
 	input_pickable = false
+	# 壁の移動を物理サーバ経由で同期し、触れているブロックを正しく押し出す（テレポート扱いを避ける）
+	sync_to_physics = true
+	# Boardからの初期化呼び出し前でも描画・判定が成立するようフォールバック構築する
+	_rebuild_handle(_board_width, _board_height)
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
-			var local_mouse_pos = get_local_mouse_position()
-			var grab_rect = Rect2(grab_area_offset - grab_area_size / 2.0, grab_area_size)
-			
-			if grab_rect.has_point(local_mouse_pos):
+			var local_mouse_pos: Vector2 = get_local_mouse_position()
+			# 取っ手の外接矩形内を掴んだときのみドラッグ開始する（盤面本体では掴めない）
+			if _grab_rect.has_point(local_mouse_pos):
 				_is_dragging = true
 				_drag_offset = get_global_mouse_position() - global_position
 				get_viewport().set_input_as_handled()
@@ -26,14 +38,68 @@ func _unhandled_input(event: InputEvent) -> void:
 			_is_dragging = false
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if _is_dragging:
-		# velocityによる移動を廃止し、座標を直接指定して絶対的な追従を実現する
-		var target_pos = get_global_mouse_position() - _drag_offset
-		global_position = target_pos
+		var target_pos: Vector2 = get_global_mouse_position() - _drag_offset
+		# 1物理フレームの移動量に上限を設ける。壁が一度にブロックをまたぐほど飛ぶと
+		# すり抜け（トンネリング）が起きるため、最大追従速度でクランプする。
+		var max_speed: float = _get_setting("max_frame_drag_speed", 0.0)
+		var max_step: float = max_speed * delta
+		var to_target: Vector2 = target_pos - global_position
+		if max_step <= 0.0 or to_target.length() <= max_step:
+			global_position = target_pos
+		else:
+			global_position += to_target.normalized() * max_step
 
 
-# 盤面のサイズ変更に合わせて、ドラッグ可能な領域を自動更新する
+# 盤面のサイズ変更に合わせて、取っ手（掴み判定＋見た目）を再構築する
 func update_grab_area(new_width: float, new_height: float) -> void:
-	grab_area_size = Vector2(new_width, new_height)
-	grab_area_offset = Vector2(new_width / 2.0, new_height / 2.0)
+	_rebuild_handle(new_width, new_height)
+
+
+# 取っ手の当たり判定矩形を盤面サイズから算出し、再描画を要求する
+func _rebuild_handle(new_width: float, new_height: float) -> void:
+	_board_width = new_width
+	_board_height = new_height
+
+	var radius: float = _get_setting("handle_radius", 60.0)
+	var thickness: float = _get_setting("handle_thickness", 16.0)
+	var bottom_margin: float = _get_setting("handle_bottom_margin", 40.0)
+
+	var center: Vector2 = _get_handle_center(new_width, new_height, radius, bottom_margin)
+
+	# 掴み判定の外接矩形（半円の膨らみ＋太さ分の余白を含めて、見た目より少し広く取り掴みやすくする）
+	var pad: float = thickness / 2.0 + 4.0
+	var rect_pos: Vector2 = Vector2(new_width - pad, center.y - radius - pad)
+	var rect_size: Vector2 = Vector2(radius + pad * 2.0, radius * 2.0 + pad * 2.0)
+	_grab_rect = Rect2(rect_pos, rect_size)
+
+	queue_redraw()
+
+
+# 取っ手の中心座標（フレームのローカル座標）を返す。
+# X：盤面の右端（半円はここから右へ膨らむ）／ Y：下端から (bottom_margin + radius) 上
+func _get_handle_center(w: float, h: float, radius: float, bottom_margin: float) -> Vector2:
+	return Vector2(w, h - bottom_margin - radius)
+
+
+func _draw() -> void:
+	var radius: float = _get_setting("handle_radius", 60.0)
+	var thickness: float = _get_setting("handle_thickness", 16.0)
+	var bottom_margin: float = _get_setting("handle_bottom_margin", 40.0)
+	var color: Color = _get_setting("handle_color", Color(0.85, 0.65, 0.3, 1.0))
+
+	var center: Vector2 = _get_handle_center(_board_width, _board_height, radius, bottom_margin)
+
+	# ジョッキの取っ手モチーフ：盤面右端から右へ膨らむ半円（-90°→90°）を描く。
+	# 縁取り（濃色）→本体 の順に重ね描きして立体感を出す。
+	var outline: Color = color.darkened(0.4)
+	draw_arc(center, radius, deg_to_rad(-90.0), deg_to_rad(90.0), 32, outline, thickness + 4.0, true)
+	draw_arc(center, radius, deg_to_rad(-90.0), deg_to_rad(90.0), 32, color, thickness, true)
+
+
+# GameSettingsからキー欠損に強く値を読む（既存スクリプトのフォールバックパターンに倣う）
+func _get_setting(key: String, fallback: Variant) -> Variant:
+	if settings != null and settings.get(key) != null:
+		return settings.get(key)
+	return fallback

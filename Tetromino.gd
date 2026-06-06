@@ -35,6 +35,26 @@ const TETROMINO_DATA := {
 
 const SHAPE_KEYS: Array[String] = ["I", "O", "T", "S", "Z", "J", "L"]
 
+# 色のアイデンティティ（color_id）を形状から分離した専用パレット。
+# 先頭7色は TETROMINO_DATA と同色（既存 color_id / プリセットとの互換維持）。C7以降が拡張色。
+const COLOR_PALETTE := {
+	"I": Color(0.20, 0.80, 0.95),  # 水色
+	"O": Color(0.95, 0.86, 0.20),  # 黄
+	"T": Color(0.69, 0.31, 0.87),  # 紫
+	"S": Color(0.35, 0.86, 0.39),  # 緑
+	"Z": Color(0.92, 0.31, 0.31),  # 赤
+	"J": Color(0.31, 0.45, 0.93),  # 青
+	"L": Color(0.95, 0.56, 0.22),  # 橙
+	"C7": Color(0.95, 0.45, 0.70),  # ピンク
+	"C8": Color(0.20, 0.72, 0.66),  # ティール
+	"C9": Color(0.70, 0.85, 0.25),  # ライム
+	"C10": Color(0.60, 0.42, 0.28), # 茶
+	"C11": Color(0.78, 0.22, 0.72), # マゼンタ（白に近い色は破壊待機の発光と紛れるため不可）
+}
+
+# 抽選順を固定するための色キー配列（block_color_count はこの先頭から N 色を採用する）。
+const COLOR_KEYS: Array[String] = ["I", "O", "T", "S", "Z", "J", "L", "C7", "C8", "C9", "C10", "C11"]
+
 @export var block_scene: PackedScene
 @export var board_path: NodePath = NodePath("../Board")
 @export var shape_id := "RANDOM"
@@ -225,6 +245,26 @@ func _physics_process(delta: float) -> void:
 		return
 
 
+# ゲームオーバー時に呼ばれる完全停止処理。
+# ドラッグ中なら安全にアンカーを破棄し、物理凍結・入力遮断・常時処理(ALWAYS)の解除を行う。
+# これによりツリーポーズと併用してブロックを一切動かせない状態にする。
+func force_stop_for_game_over() -> void:
+	# ドラッグ中だった場合はアンカーを安全に破棄してドラッグ状態を解除
+	if _is_dragging_by_player:
+		_is_dragging_by_player = false
+		collision_mask = _original_collision_mask
+		if is_instance_valid(_drag_anchor):
+			_drag_anchor.queue_free()
+	# 物理を凍結し、スロー演出の残りも解除
+	freeze = true
+	if has_method("set_slow_motion"):
+		set_slow_motion(false)
+	# 入力を遮断
+	_is_input_paused = true
+	# ドラッグで PROCESS_MODE_ALWAYS にされている場合があるため、ツリーポーズに従うよう戻す
+	process_mode = Node.PROCESS_MODE_PAUSABLE
+
+
 func pause_input() -> void:
 	if _is_locked:
 		return
@@ -290,9 +330,8 @@ func _spawn_blocks() -> void:
 		# 生成された個別の色情報でブロックのメタデータと見た目を上書き
 		if _i < puyo_colors.size():
 			var key: String = puyo_colors[_i]
-			if TETROMINO_DATA.has(key):
-				var shape_def: Dictionary = TETROMINO_DATA[key] as Dictionary
-				final_color = shape_def.get("color", Color.WHITE) as Color
+			if COLOR_PALETTE.has(key):
+				final_color = COLOR_PALETTE[key] as Color
 				final_meta_id = key
 
 		_apply_block_color(block, final_color)
@@ -300,15 +339,28 @@ func _spawn_blocks() -> void:
 		blocks.append(block)
 
 
+# 抽選に使う色キーの集合を返す。GameSettings.block_color_count を 2〜パレット色数にクランプし、
+# COLOR_KEYS の先頭から N 色を採用する（色数を増やすと同色が揃いにくく難しくなる）。
+func _get_active_color_keys() -> Array[String]:
+	var raw: Variant = settings.get("block_color_count") if is_instance_valid(settings) else null
+	var count: int = int(raw) if raw != null else COLOR_KEYS.size()
+	count = clamp(count, 2, COLOR_KEYS.size())
+	var result: Array[String] = []
+	for i in range(count):
+		result.append(COLOR_KEYS[i])
+	return result
+
+
 func _generate_puyo_colors() -> Array[String]:
 	var colors: Array[String] = []
+	var active_keys: Array[String] = _get_active_color_keys()
 	var size: int = local_cells.size()
-	
+
 	# 【安全性・仕様確保】サイズが2以下（正規のぷよ形状）の場合は、
 	# 同色強制（リジェクションサンプリング）をバイパスし、完全に独立したランダムな色のペアを返す
 	if size <= 2:
 		for i in range(size):
-			colors.append(SHAPE_KEYS[randi() % SHAPE_KEYS.size()])
+			colors.append(active_keys[randi() % active_keys.size()])
 		return colors
 
 	var adjacency: Array = []
@@ -325,8 +377,8 @@ func _generate_puyo_colors() -> Array[String]:
 	while true:
 		colors.clear()
 		for i in range(size):
-			colors.append(SHAPE_KEYS[randi() % SHAPE_KEYS.size()])
-			
+			colors.append(active_keys[randi() % active_keys.size()])
+
 		var has_adjacent_same_color = false
 		for i in range(size):
 			for j in adjacency[i]:
@@ -540,6 +592,10 @@ func _check_and_split_if_needed() -> void:
 
 # 孤立したブロックグループを新しいテトリミノとして独立させる
 func _detach_group(sub_group: Array) -> void:
+	# [SlowTrace] 分裂発生。連鎖演出中に起きるとブロック移籍で消去Tween対象が解放され得る。
+	var _slow_now: bool = board.get("_is_slow_motion") if is_instance_valid(board) else false
+	print("[SlowTrace] _detach_group 実行 cells=", sub_group.size(), " board_slow=", _slow_now, " t=", Time.get_ticks_msec())
+
 	var tet_scene = load("res://Tetromino.tscn") as PackedScene
 	if not tet_scene: return
 	var new_tet = tet_scene.instantiate() as Tetromino
