@@ -220,6 +220,7 @@ grow_vertical = 2
 text = "SCORE"
 
 [node name="MenuUI" type="CanvasLayer" parent="." unique_id=482910551]
+process_mode = 3
 layer = 5
 
 [node name="HamburgerButton" type="Button" parent="MenuUI" unique_id=482910552]

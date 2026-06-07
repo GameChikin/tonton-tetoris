@@ -314,6 +314,9 @@ func _physics_process(delta: float) -> void:
 	_cleanup_out_of_bounds()
 	# 枠を高速で振った際などに壁をすり抜けたブロックを内側へ戻す安全網
 	_contain_blocks_inside_frame()
+	# 重なり緩和(緩和B): テレポート（ドッキング配置・ドラッグ貫通）で生じた同一セルの重なりを検出し、
+	# 該当剛体を起こして物理ソルバに自然に押し離させる（物理の手触りは維持）
+	_separate_overlapping_blocks()
 
 	# 【ステップ3】低頻度自動ドッキングスキャン（処理負荷軽減のため0.2秒間隔で実行）
 	_auto_dock_timer += delta
@@ -401,45 +404,62 @@ func _evaluate_puyo_matches(delta: float) -> void:
 	if not physics_frame:
 		return
 		
-	var active_blocks: Array[Node] = []
+	var min_clear_count: int = 4
+
+	# 1. 盤面内の全ブロックを「色 → セル(Vector2i) → そのセルに居るブロック配列」へ集約する。
+	#    セル単位で扱うことで、物理的に重なった/極端に接近したブロックが同一セルに畳まれ、
+	#    連結数を水増しして「見た目4つ未満なのに連鎖」が起きるのを防ぐ（重なりは1セル＝1カウント）。
+	var color_cells: Dictionary = {}  # color_id -> { Vector2i: Array[block] }
+	var active_blocks: Array[Node] = []  # 後段のグロー解除用に、判定対象の全ブロックを保持
 	for child in get_children():
 		if child is Tetromino:
 			for block in child.get_children():
-				if block is CollisionShape2D and not block.disabled:
-					var local_pos = physics_frame.to_local(block.global_position)
-					if local_pos.x >= -4.0 and local_pos.x <= settings.board_width_px + 4.0:
-						active_blocks.append(block)
-						
-	var visited: Dictionary = {}
+				if not (block is CollisionShape2D) or block.disabled:
+					continue
+				if not block.has_meta("color_id"):
+					continue
+				var local_pos: Vector2 = physics_frame.to_local(block.global_position)
+				# 盤面の左右からはみ出した（落下中など）ブロックは判定対象外
+				if local_pos.x < -4.0 or local_pos.x > settings.board_width_px + 4.0:
+					continue
+				active_blocks.append(block)
+				var cell := _cell_of(block, physics_frame)
+				var color_id = block.get_meta("color_id")
+				if not color_cells.has(color_id):
+					color_cells[color_id] = {}
+				var cells: Dictionary = color_cells[color_id]
+				if not cells.has(cell):
+					cells[cell] = []
+				cells[cell].append(block)
+
+	# 2. 同色セルの4近傍フラッドフィルで連結成分を求め、ユニークなセル数で消去判定する。
 	var matched_groups: Array[Array] = []
-	var neighbor_dist: float = 38.0
-	var min_clear_count: int = 4
-	
-	for block in active_blocks:
-		if visited.has(block):
-			continue
-			
-		if not block.has_meta("color_id"):
-			continue
-		var color_id = block.get_meta("color_id")
-		
-		var group: Array[Node] = []
-		var stack: Array[Node] = [block]
-		
-		while not stack.is_empty():
-			var curr = stack.pop_back()
-			if visited.has(curr):
+	var adjacent_offsets := [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]
+	for color_id in color_cells.keys():
+		var cells: Dictionary = color_cells[color_id]
+		var visited_cells: Dictionary = {}
+		for start_cell in cells.keys():
+			if visited_cells.has(start_cell):
 				continue
-			visited[curr] = true
-			group.append(curr)
-			
-			for other in active_blocks:
-				if not visited.has(other) and other.has_meta("color_id") and other.get_meta("color_id") == color_id:
-					if curr.global_position.distance_to(other.global_position) <= neighbor_dist:
-						stack.append(other)
-						
-		if group.size() >= min_clear_count:
-			matched_groups.append(group)
+			var component: Array[Vector2i] = []
+			var stack: Array[Vector2i] = [start_cell]
+			while not stack.is_empty():
+				var c: Vector2i = stack.pop_back()
+				if visited_cells.has(c):
+					continue
+				visited_cells[c] = true
+				component.append(c)
+				for off in adjacent_offsets:
+					var n: Vector2i = c + off
+					if cells.has(n) and not visited_cells.has(n):
+						stack.append(n)
+			# ユニークセル数が閾値以上なら、そのセル群に属する全ブロックを消去対象にする
+			if component.size() >= min_clear_count:
+				var group: Array[Node] = []
+				for cc in component:
+					for b in cells[cc]:
+						group.append(b)
+				matched_groups.append(group)
 			
 	var current_group_keys: Dictionary = {}
 	var all_matched_blocks: Dictionary = {}
@@ -568,6 +588,8 @@ func _execute_chain_queue(rule: int) -> void:
 	# キューが空になったら連鎖を完全に終了し、カウントをリセットする
 	_is_chain_active = false
 	_current_chain_count = 0
+	# 先読み演出で立てた連鎖ロックを必ず解除（戻し忘れると結合・ドラッグ不能になる）
+	_clear_all_chain_locks()
 
 	# フェイルセーフ：途中でブロックが消失して消去エフェクトがスキップされた場合でも、
 	# 連鎖の完全終了時には確実にスローモーションを解除してバグを防ぐ
@@ -597,8 +619,32 @@ func _chain_watchdog(_start_msec: int) -> void:
 			_is_chain_active = false
 			_current_chain_count = 0
 			_chain_queue.clear()
+			_clear_all_chain_locks()
 			resolve_finished.emit()
 			return
+
+
+# ブロックのグローバル座標を、枠ローカルの整数セル(Vector2i)へ変換する単一基準関数。
+# 占有判定（ドッキング）とマッチング判定の双方でこれを用い、
+# 「座標→セル」の計算式を一本化する（各所で個別に丸めて齟齬が出るのを防ぐ）。
+# physics_frame.to_local は枠の位置・回転・スケールを考慮するため、生の減算より正確。
+func _cell_of(block: Node2D, physics_frame: Node2D = null) -> Vector2i:
+	if physics_frame == null:
+		physics_frame = get_node_or_null("BoardPhysicsFrame")
+	if physics_frame == null:
+		return Vector2i.ZERO
+	var local: Vector2 = physics_frame.to_local(block.global_position)
+	return Vector2i(round(local.x / CELL_SIZE), round(local.y / CELL_SIZE))
+
+
+# 連鎖の先読み演出で立てた _is_chain_locked を、盤面上の全Tetrominoから解除する。
+# このフラグは「立てるだけ」で戻し忘れると、対象Tetrominoが永久に
+# ドラッグ・自動結合の対象外になる（同色でもくっつかない）ため、
+# 連鎖の終了経路（正常終了・ウォッチドッグ復旧）で必ず呼んでリセットする。
+func _clear_all_chain_locks() -> void:
+	for child in get_children():
+		if child is Tetromino and child.get("_is_chain_locked"):
+			child.set("_is_chain_locked", false)
 
 
 func _get_group_key(group: Array) -> String:
@@ -713,20 +759,24 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 	var occupied_cells := {}
 	var all_active_blocks := []
 	for child in get_children():
-		if child is Tetromino and child != source_tet and child.get("_is_locked"):
+		if child is Tetromino and child != source_tet:
+			var child_locked: bool = child.get("_is_locked")
 			for block in child.get_children():
 				if block is CollisionShape2D and not block.disabled:
-					var local_pos = block.global_position - frame_origin
-					var bx = round(local_pos.x / CELL_SIZE)
-					var by = round(local_pos.y / CELL_SIZE)
-					occupied_cells[Vector2i(bx, by)] = child
-					all_active_blocks.append({
-						"block": block,
-						"tet": child,
-						"cell": Vector2i(bx, by),
-						"pos": block.global_position,
-						"color_id": block.get_meta("color_id") if block.has_meta("color_id") else ""
-					})
+					# マッチング判定と同じ _cell_of を用いて座標→セルを一本化する
+					var cell := _cell_of(block, physics_frame)
+					# 重なり防止(緩和A): ロック有無に関わらず全ての他ブロックを占有セルとして登録し、
+					# 既にブロックがある場所へ配置されるのを防ぐ（落下中の塊への重なりも回避）。
+					occupied_cells[cell] = child
+					# ただし結合先（ターゲット）候補は、安定しているロック済みブロックのみとする。
+					if child_locked:
+						all_active_blocks.append({
+							"block": block,
+							"tet": child,
+							"cell": cell,
+							"pos": block.global_position,
+							"color_id": block.get_meta("color_id") if block.has_meta("color_id") else ""
+						})
 					
 	if all_active_blocks.is_empty():
 		result.reason = "Board is empty"
@@ -862,11 +912,42 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 	
 	var base_block = target_data.block
 	var base_cell = target_data.cell
-	
+
+	# 補間時間は設定から参照（0なら瞬間移動）。配置ブロック・グリッド吸着で共通利用する。
+	var anim_duration: float = 0.15
+	if settings != null and settings.get("docking_anim_duration") != null:
+		anim_duration = maxf(0.0, settings.docking_anim_duration)
+
+	# --- グリッド吸着（重なり防止 / 原因Bの根治）---
+	# 結合先(target_tet)を最寄りの90度＋絶対グリッドの目標姿勢へ寄せる。
+	# 各Tetrominoが物理で蓄積した微小オフセット（最大±16px）を取り除くことで、
+	# ローカル座標が常に CELL_SIZE の整数倍になり、配置ブロックが検証済みの絶対セルに
+	# 正確に収まる（既存ブロックと重ならない）。_rebuild_internal_arrays の整合も保たれる。
+	# 瞬間移動ではなく anim_duration で補間するため、目標姿勢を「解析的に」先に求める。
+	var pf_node := get_node_or_null("BoardPhysicsFrame") as Node2D
+	var target_pose_valid := false
+	var target_rot_final := 0.0
+	var target_pos_final := Vector2.ZERO
+	if is_instance_valid(target_tet) and is_instance_valid(pf_node) and is_instance_valid(base_block):
+		target_rot_final = round(target_tet.rotation / (PI / 2.0)) * (PI / 2.0)
+		# base_block を base_cell の中心へ合わせる target_tet の最終位置を逆算
+		var desired_base_global: Vector2 = pf_node.to_global(Vector2(base_cell.x * CELL_SIZE, base_cell.y * CELL_SIZE))
+		target_pos_final = desired_base_global - base_block.position.rotated(target_rot_final)
+		target_pose_valid = true
+		# アニメ中は対象を凍結・ロックして物理干渉を防ぐ（完了時に解除）
+		target_tet.set("_is_docking_animating", true)
+		target_tet.freeze = true
+		target_tet.linear_velocity = Vector2.ZERO
+		target_tet.angular_velocity = 0.0
+
 	# 修正: target_tet が破壊されたらTweenも即座にキャンセルされるようバインド
 	var tween = create_tween().bind_node(target_tet).set_parallel(true)
-	var anim_duration = 0.15 # 吸着アニメーションの時間
-	
+
+	# 結合先の姿勢をグリッドへ補間（既存ブロックも一緒にカチッと整列する）
+	if target_pose_valid:
+		tween.tween_property(target_tet, "global_position", target_pos_final, anim_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tween.tween_property(target_tet, "rotation", target_rot_final, anim_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
 	for i in range(source_blocks.size()):
 		var block = source_blocks[i]
 		var target_cell = target_cells[i]
@@ -905,8 +986,12 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 		if is_instance_valid(effect_manager) and effect_manager.has_method("play_snap_particles") and snap_effect_pos != Vector2.ZERO:
 			effect_manager.play_snap_particles(snap_effect_pos)
 
-		# 解除: アニメーションが完全終了したので、結合先の排他ロックを解除して物理演算や次の結合を許可する
+		# 解除: アニメーションが完全終了したので、結合先の凍結・排他ロックを解除して
+		# 物理演算や次の結合を許可する。速度を打ち消してから戻すことで飛び跳ねを防ぐ。
 		if is_instance_valid(target_tet):
+			target_tet.linear_velocity = Vector2.ZERO
+			target_tet.angular_velocity = 0.0
+			target_tet.freeze = false
 			target_tet.set("_is_docking_animating", false)
 	)
 	
@@ -1056,6 +1141,41 @@ func _contain_blocks_inside_frame() -> void:
 				tet.linear_velocity = Vector2.ZERO
 				tet.angular_velocity = 0.0
 				break  # 1Tetrominoにつき1回矯正したら次へ（過補正を防ぎ、次フレームで収束させる）
+
+
+# 重なり緩和（緩和B）：複数のTetrominoが同一セルを占有している＝物理的な重なりを検出し、
+# 該当する剛体を「起こす(sleeping=false)」ことで、物理ソルバの貫通解消（押し離し）を再作動させる。
+# テレポート（ドッキング配置・ドラッグ中の貫通）でめり込んだまま眠ってしまったブロックを救済する。
+# 直接座標を動かさず物理に任せるため、落下・積み上げの手触りは保たれる。
+func _separate_overlapping_blocks() -> void:
+	var pf = get_node_or_null("BoardPhysicsFrame")
+	if pf == null:
+		return
+	var cell_owners: Dictionary = {}  # Vector2i -> Array[Tetromino]
+	for child in get_children():
+		if not (child is Tetromino):
+			continue
+		# 演出・操作中の対象は触らない（ドッキングアニメやドラッグを邪魔しない）
+		if child.get("_is_docking_animating") or child.get("_is_dragging_by_player"):
+			continue
+		for block in child.get_children():
+			if not (block is CollisionShape2D) or block.disabled:
+				continue
+			var cell: Vector2i = _cell_of(block, pf)
+			if not cell_owners.has(cell):
+				cell_owners[cell] = []
+			var owners: Array = cell_owners[cell]
+			if not owners.has(child):
+				owners.append(child)
+
+	# 同一セルを2つ以上のTetrominoが占有していれば重なり。該当剛体を起こして分離を促す。
+	for cell in cell_owners:
+		var owners: Array = cell_owners[cell]
+		if owners.size() >= 2:
+			for t in owners:
+				if t.freeze:
+					continue
+				t.sleeping = false
 
 
 # 盤面上の全テトリミノの物理スロー状態を一斉に切り替える（ステップ2）

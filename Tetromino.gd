@@ -508,14 +508,6 @@ func execute_ai_drop(target_x: float) -> void:
 	_lock_to_board()
 
 
-func _process_magnetic_snap() -> void:
-	pass
-
-
-func _check_and_steal_from(_other_tet: Tetromino, _dist: float, _snap_duration: float = 0.2) -> bool:
-	return false
-
-
 func _get_my_colors() -> Dictionary:
 	var colors = {}
 	for b in blocks:

@@ -52,12 +52,11 @@ class_name GameSettings
 @export var snap_x_strength: float = 8.0
 ## X座標の引き寄せが有効になる、マス中心からのズレの限界距離（ピクセル）です。
 @export var snap_x_limit: float = 12.0
-## 盤面や他のブロックに対して、磁石のように吸着する処理の判定半径です。
-@export var magnetic_snap_radius: float = 48.0
-## 磁石のような吸着処理が始まってから、完了するまでの時間（秒）です。
-@export var magnetic_snap_duration: float = 0.2
 ## 一度の判定で、同時に自動結合（ドッキング）できるブロックの最大数です。
 @export var max_auto_dock_blocks: int = 4
+## ドッキング時に、結合先をグリッドへ吸着させ、ブロックを所定位置へ移動させる補間アニメーションの時間（秒）です。
+## 0にすると瞬間移動（アニメなし）になります。
+@export var docking_anim_duration: float = 0.15
 
 @export_group("AI Settings")
 ## AIによる自動操作（デモプレイや敵など）を有効にするかどうかの設定です。

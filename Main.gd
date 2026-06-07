@@ -245,9 +245,20 @@ func game_over() -> void:
 			result_ui.show_result(final_score, max_chain, SaveManager.high_score)
 
 func toggle_menu() -> void:
+	# ゲームオーバー中はメニュー操作でポーズ状態を解除しないようにする
+	if _is_busy:
+		return
 	var menu_panel = get_node_or_null("MenuUI/MenuPanel")
-	if is_instance_valid(menu_panel):
-		menu_panel.visible = not menu_panel.visible
+	if not is_instance_valid(menu_panel):
+		return
+	var opening: bool = not menu_panel.visible
+	menu_panel.visible = opening
+	# メニューを開いている間はゲーム全体を一時停止し、時間（とブロックの落下）を止める。
+	# Board は通常 PROCESS_MODE_ALWAYS で一時停止を無視するため、メニュー中だけ
+	# PAUSABLE に切り替えて確実に処理を止め、閉じたら ALWAYS に戻す。
+	if is_instance_valid(board):
+		board.process_mode = Node.PROCESS_MODE_PAUSABLE if opening else Node.PROCESS_MODE_ALWAYS
+	get_tree().paused = opening
 
 
 func retry_game() -> void:

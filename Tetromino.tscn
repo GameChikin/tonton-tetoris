@@ -16,6 +16,3 @@ linear_damp = 5.0
 angular_damp = 5.0
 script = ExtResource("1_m4h6v")
 block_scene = ExtResource("2_x7q2n")
-snap_rotation_strength = 20.0
-snap_x_strength = 20.0
-snap_x_limit = 20.0
