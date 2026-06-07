@@ -6,6 +6,13 @@ extends AnimatableBody2D
 
 var settings: GameSettings = preload("res://game_settings.tres")
 
+# 枠がこの速度(px/秒)未満になったら「止まった」とみなし、ブロックへの引きずりを解除して
+# 慣性で自由に飛ばす（鍋を止めた瞬間に米が舞う＝ブレーキをかけないためのしきい値）。
+const RELEASE_SPEED := 15.0
+# 枠速度がこの量(px/秒)以上「下がった」ら減速中とみなし、運びを止めて慣性に任せる。
+# ノイズで運ぶ/離すがチラつかないための不感帯。
+const DECEL_TOLERANCE := 20.0
+
 # 掴み判定の外接矩形（取っ手の当たり判定）。update_grab_area / _rebuild_handle で算出する。
 var _grab_rect: Rect2 = Rect2()
 
@@ -15,6 +22,14 @@ var _board_height: float = 640.0
 
 var _is_dragging: bool = false
 var _drag_offset: Vector2 = Vector2.ZERO
+
+# 加速/減速の判定用：平滑化した枠速度と、前フレームのその速さ。
+# 「減速し始めたら運びを止めて慣性に任せる」ためにフレーム間で保持する。
+var _frame_vel_smooth: Vector2 = Vector2.ZERO
+var _prev_frame_speed: float = 0.0
+
+# [FollowDebug] 追従ログの間引き用アキュムレータ（切り分け後に削除予定）
+var _follow_dbg_accum: float = 0.0
 
 
 func _ready() -> void:
@@ -33,6 +48,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			if _grab_rect.has_point(local_mouse_pos):
 				_is_dragging = true
 				_drag_offset = get_global_mouse_position() - global_position
+				# 掴み直しのたびに加速/減速判定をクリーンに始める
+				_frame_vel_smooth = Vector2.ZERO
+				_prev_frame_speed = 0.0
 				get_viewport().set_input_as_handled()
 		else:
 			_is_dragging = false
@@ -46,11 +64,85 @@ func _physics_process(delta: float) -> void:
 		# すり抜け（トンネリング）が起きるため、最大追従速度でクランプする。
 		var max_speed: float = _get_setting("max_frame_drag_speed", 0.0)
 		var max_step: float = max_speed * delta
-		var to_target: Vector2 = target_pos - global_position
+		var prev_pos: Vector2 = global_position
+		var to_target: Vector2 = target_pos - prev_pos
+		# ※sync_to_physics=true の AnimatableBody2D は global_position への書き込みが物理サーバへ
+		#   遅延反映され、同フレーム内で読み返すと古い値のままになる。よって移動量は読み返しでは
+		#   なく「これから設定する新座標」をローカル変数 new_pos で保持して算出する。
+		var new_pos: Vector2
 		if max_step <= 0.0 or to_target.length() <= max_step:
-			global_position = target_pos
+			new_pos = target_pos
 		else:
-			global_position += to_target.normalized() * max_step
+			new_pos = prev_pos + to_target.normalized() * max_step
+		global_position = new_pos
+
+		# 枠の移動速度を求め、中のブロックを粘性ドラッグで引きずる（チャーハンの鍋＝慣性追従）。
+		# 速度を上書きせず「力（インパルス）」を加えるだけなので、重力など本来の物理はそのまま生きる。
+		# 加速/減速の判定をマウスのジッターで暴れさせないよう、平滑化した速度を使う。
+		if delta > 0.0:
+			var frame_velocity: Vector2 = (new_pos - prev_pos) / delta
+			_frame_vel_smooth = _frame_vel_smooth.lerp(frame_velocity, 0.4)
+			_drag_inner_blocks(_frame_vel_smooth, delta)
+
+
+# 枠の速度へ向けて各テトリミノに粘性ドラッグのインパルスを加え、慣性で“遅れて”追従させる。
+#   Δv = strength * delta * (枠速度 - ブロック速度) を毎フレーム与える（= 連続的な力と等価）
+# ・速度を上書きせず差分を足すだけなので重力と共存し、落下や物理の手触りを壊さない。
+# ・ブロック速度は枠速度を超えないため暴れにくく、枠開口部から飛び出しにくい。
+# ・strength が小さいほど“もっさり”遅れて付いてくる（鍋の米のイメージ）。
+# ・apply_central_force と違いインパルスは眠った剛体も確実に起こして即反映される。
+func _drag_inner_blocks(frame_velocity: Vector2, delta: float) -> void:
+	var strength: float = _get_setting("frame_drag_follow_strength", 2.0)
+	if strength <= 0.0:
+		return
+
+	# 鍋を振る挙動の肝：「加速・等速のときだけ運び、減速し始めたら運びを止めて慣性に任せる」。
+	# こうすると振り続けても、一振りごとに『押す(加速で運ぶ)→返す/止める(減速で解放)』が起き、
+	# 解放された瞬間に勢いのついたブロックが慣性で飛び、重力と壁で転がる＝チャーハンが舞う。
+	# ※減速時に運ぶ（=速度0へ引き戻す）と鍋を止めた瞬間に吸い付いて止まり、舞わない。
+	var frame_speed: float = frame_velocity.length()
+	var decelerating: bool = frame_speed < _prev_frame_speed - DECEL_TOLERANCE
+	_prev_frame_speed = frame_speed
+	# 止まりかけ or 減速中は運ばず、慣性に任せる
+	var is_carrying: bool = frame_speed >= RELEASE_SPEED and not decelerating
+
+	var board: Node = get_parent()
+	if board == null:
+		return
+	var carried: int = 0
+	var tossed: int = 0
+	if is_carrying:
+		var lerp_t: float = clampf(strength * delta, 0.0, 1.0)
+		var dir: Vector2 = frame_velocity / frame_speed
+		for child in board.get_children():
+			if not (child is Tetromino):
+				continue
+			var tet := child as Tetromino
+			if not is_instance_valid(tet) or tet.is_queued_for_deletion():
+				continue
+			# 凍結中・演出・操作中の塊は触らない（落下停止／ドラッグ／結合アニメ／連鎖ロックを邪魔しない）
+			if tet.freeze or tet.get("_is_dragging_by_player") or tet.get("_is_docking_animating") or tet.get("_is_chain_locked"):
+				continue
+			# 【慣性に任せる肝】すでに枠の進行方向と逆向きに動いているブロックは、
+			# 跳ね飛ばされて宙を舞っている最中とみなし運ばない。これが無いと振り返した瞬間に
+			# 掴み直して逆向きの勢いで上書きしてしまい、飛ばずに連れ戻される。
+			# 壁・重力で向きが戻って枠と同方向になれば（=着地）再び運ぶ対象に戻る。
+			if tet.linear_velocity.dot(dir) < 0.0:
+				tossed += 1
+				continue
+			tet.sleeping = false
+			# 運ぶ向き（枠の進行方向）成分だけ加速し、枠より速い分にはブレーキをかけない。
+			var rel: Vector2 = frame_velocity - tet.linear_velocity
+			var along: float = rel.dot(dir)  # 枠の進行方向に対し、まだ追いついていない分(正)だけ運ぶ
+			if along > 0.0:
+				tet.apply_central_impulse(dir * along * lerp_t * tet.mass)
+			carried += 1
+
+	# [FollowDebug] 効いているか切り分けるための一時ログ（0.3秒間隔で間引き）
+	_follow_dbg_accum += delta
+	if _follow_dbg_accum >= 0.3:
+		_follow_dbg_accum = 0.0
+		print("[FollowDebug] speed=", roundf(frame_speed), " carry=", is_carrying, " 運び中=", carried, " 舞い中=", tossed)
 
 
 # 見える内容（盤面＋取っ手）の外接矩形を、枠原点(global_position)からの相対座標で返す

@@ -625,6 +625,15 @@ func _process(_delta: float) -> void:
 
 
 # ブロックの境界線と塊の外周を描画する
+# ドッキング上限に達して、これ以上どの塊とも結合できない状態か。
+# 上限サイズ(max_auto_dock_blocks)以上の塊は、何かを足すと必ず上限超過になるため結合不可。
+func is_dock_locked() -> bool:
+	var maxv: int = 8
+	if is_instance_valid(settings) and settings.get("max_auto_dock_blocks") != null:
+		maxv = settings.max_auto_dock_blocks
+	return blocks.size() >= maxv
+
+
 func _draw() -> void:
 	if blocks.is_empty() or local_cells.is_empty():
 		return
@@ -635,6 +644,13 @@ func _draw() -> void:
 	var thick_line_color = Color(1.0, 1.0, 1.0, 0.9) # 塊の外周の太い線（はっきりした白）
 	var thick_width = 3.0
 	var thin_width = 1.0
+
+	# ドッキング上限に達した塊は、これ以上結合できないことを示すため外周を鉄（メタリック）調にする。
+	# 色IDは保持されるので、色を揃えれば従来どおり消去できる。
+	if is_dock_locked():
+		thin_line_color = Color(0.55, 0.58, 0.62, 0.5)   # 鉄っぽいグレーの細線
+		thick_line_color = Color(0.78, 0.81, 0.85, 1.0)  # 明るい鋼色の太線
+		thick_width = 6.0
 
 	# 1. 各ブロックの細い境界線を描画
 	for block in blocks:

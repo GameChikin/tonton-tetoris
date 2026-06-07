@@ -24,7 +24,6 @@ SaveManager="*uid://4is0fe1u5qho"
 window/size/viewport_width=800
 window/size/viewport_height=900
 window/stretch/mode="canvas_items"
-window/stretch/aspect="keep"
 
 [editor]
 

@@ -26,6 +26,12 @@ var _chain_queue: Array = []
 var _is_chain_active: bool = false
 var _current_chain_count: int = 0
 var _line_timers: Dictionary = {}
+# Puyoルールの破壊待機を「ブロック単位の充電量」で管理する（block -> 0..hold 秒）。
+# グループのキーではなくブロック単位で持つことで、塊のメンバーが少し入れ替わっても
+# 充電が維持され、戻り（解除）の判定が緩くなる（入りは等速、解除はゆっくり減衰）。
+var _block_charge: Dictionary = {}
+# 連鎖キューへ投入済みで消去待ちのブロック（block -> true）。マッチ判定の対象外にして二重投入を防ぐ。
+var _pending_clear: Dictionary = {}
 var _auto_dock_timer: float = 0.0
 # 現在盤面が演出用のスローモーション（泥沼状態）にあるかどうかのフラグ
 var _is_slow_motion: bool = false
@@ -416,6 +422,9 @@ func _evaluate_puyo_matches(delta: float) -> void:
 			for block in child.get_children():
 				if not (block is CollisionShape2D) or block.disabled:
 					continue
+				# 連鎖キューへ投入済み（消去待ち）のブロックは判定対象外（二重投入・誤再充電を防ぐ）
+				if _pending_clear.has(block):
+					continue
 				if not block.has_meta("color_id"):
 					continue
 				var local_pos: Vector2 = physics_frame.to_local(block.global_position)
@@ -461,52 +470,59 @@ func _evaluate_puyo_matches(delta: float) -> void:
 						group.append(b)
 				matched_groups.append(group)
 			
-	var current_group_keys: Dictionary = {}
-	var all_matched_blocks: Dictionary = {}
-	var trigger_chain = false
-	
+	# --- 破壊待機の充電（ブロック単位）---
+	# キー（グループ集合）ではなくブロック単位で充電を持つことで、塊のメンバーが少し
+	# 入れ替わっても“白さ”が保たれる。入り＝等速で充電、戻り（解除）＝release_rateでゆっくり減衰。
+	var hold: float = settings.line_clear_hold_time
+	# 戻り（解除）は充電の半分の速さでゆっくり減衰させ、少しの移動では白さが消えないようにする。
+	var release_rate: float = 0.5
+	var matched_blocks: Dictionary = {}
 	for group in matched_groups:
-		var key = _get_group_key(group)
-		current_group_keys[key] = true
-		
-		if not _line_timers.has(key):
-			_line_timers[key] = 0.0
-			
-		_line_timers[key] += delta
-		var progress = clampf(_line_timers[key] / settings.line_clear_hold_time, 0.0, 1.0)
-		
-		for block in group:
-			all_matched_blocks[block] = true
-			if is_instance_valid(block):
-				var glow = progress * 2.5
-				block.modulate = Color(1.0 + glow, 1.0 + glow, 1.0 + glow, 1.0)
-				
-		if _line_timers[key] >= settings.line_clear_hold_time:
-			trigger_chain = true
-			
-	var to_erase = []
-	for key in _line_timers.keys():
-		if typeof(key) == TYPE_STRING and not current_group_keys.has(key):
-			to_erase.append(key)
-	for key in to_erase:
-		_line_timers.erase(key)
-		
-	for block in active_blocks:
-		if not all_matched_blocks.has(block):
-			block.modulate = Color.WHITE
-			
-	# いずれかの待機条件が満了したら、現在待機状態にある全てのグループを連鎖に巻き込む
-	if trigger_chain:
-		for group in matched_groups:
-			var key = _get_group_key(group)
-			if _line_timers.has(key):
-				_chain_queue.append(group)
-				_line_timers.erase(key)
-				
-		# キューに追加後、連鎖処理が稼働していなければスタートさせる
-		if not _chain_queue.is_empty() and not _is_chain_active:
-			_execute_chain_queue(1)
+		for b in group:
+			matched_blocks[b] = true
 
+	for b in active_blocks:
+		if matched_blocks.has(b):
+			_block_charge[b] = minf(hold, _block_charge.get(b, 0.0) + delta)
+		else:
+			var cur: float = _block_charge.get(b, 0.0)
+			if cur > 0.0:
+				cur = maxf(0.0, cur - delta * release_rate)
+				if cur <= 0.0:
+					_block_charge.erase(b)
+				else:
+					_block_charge[b] = cur
+
+	# グロー表示（charge/hold に応じて発光。0なら通常色）。
+	for b in active_blocks:
+		if not is_instance_valid(b):
+			continue
+		var prog: float = clampf(_block_charge.get(b, 0.0) / hold, 0.0, 1.0)
+		if prog > 0.0:
+			var glow: float = prog * 2.5
+			b.modulate = Color(1.0 + glow, 1.0 + glow, 1.0 + glow, 1.0)
+		else:
+			b.modulate = Color.WHITE
+
+	# トリガー：現在マッチ中かつ構成ブロックが全て満充電(>=hold)の塊を連鎖キューへ投入する。
+	# 満充電なら確実に発火するため「白いのに連鎖に加わらない」を防ぐ。
+	var triggered: bool = false
+	for group in matched_groups:
+		if group.is_empty():
+			continue
+		var all_full: bool = true
+		for b in group:
+			if _block_charge.get(b, 0.0) < hold:
+				all_full = false
+				break
+		if all_full:
+			for b in group:
+				_pending_clear[b] = true
+			_chain_queue.append(group)
+			triggered = true
+
+	if triggered and not _chain_queue.is_empty() and not _is_chain_active:
+		_execute_chain_queue(1)
 
 func _execute_chain_queue(rule: int) -> void:
 	# [SlowTrace] 連鎖開始。ハング検出用にウォッチドッグを起動（awaitしない＝バックグラウンド監視）
@@ -590,6 +606,8 @@ func _execute_chain_queue(rule: int) -> void:
 	_current_chain_count = 0
 	# 先読み演出で立てた連鎖ロックを必ず解除（戻し忘れると結合・ドラッグ不能になる）
 	_clear_all_chain_locks()
+	# 充電状態・消去待ちの片付け
+	_after_chain_cleanup()
 
 	# フェイルセーフ：途中でブロックが消失して消去エフェクトがスキップされた場合でも、
 	# 連鎖の完全終了時には確実にスローモーションを解除してバグを防ぐ
@@ -620,6 +638,7 @@ func _chain_watchdog(_start_msec: int) -> void:
 			_current_chain_count = 0
 			_chain_queue.clear()
 			_clear_all_chain_locks()
+			_after_chain_cleanup()
 			resolve_finished.emit()
 			return
 
@@ -645,6 +664,18 @@ func _clear_all_chain_locks() -> void:
 	for child in get_children():
 		if child is Tetromino and child.get("_is_chain_locked"):
 			child.set("_is_chain_locked", false)
+
+
+# 連鎖終了時の片付け：消去待ち(_pending_clear)を解除し、無効になった充電エントリを掃除する。
+# 特にウォッチドッグ中断時にこれを呼ばないと、投入済みブロックが永久にマッチ対象外となり詰む。
+func _after_chain_cleanup() -> void:
+	_pending_clear.clear()
+	var invalid: Array = []
+	for k in _block_charge.keys():
+		if not is_instance_valid(k):
+			invalid.append(k)
+	for k in invalid:
+		_block_charge.erase(k)
 
 
 func _get_group_key(group: Array) -> String:
@@ -888,6 +919,22 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 			result.debug_points.append({"pos": t_data.pos, "reason": "Overlap"})
 			continue # どの隣接マスに置いても全体のどこかが被ってしまう場合は次点ペアへ
 			
+		# サイズ上限：合体後のブロック数が上限を超えるドッキングは行わない。
+		# 手動ドラッグ・自動結合の双方がこの _evaluate_docking を通るため、際限ない巨大化を防げる。
+		var max_dock: int = 8
+		if settings != null and settings.get("max_auto_dock_blocks") != null:
+			max_dock = settings.max_auto_dock_blocks
+		if source_blocks.size() + _count_blocks(t_data.tet) > max_dock:
+			result.debug_points.append({"pos": t_data.pos, "reason": "Size Limit"})
+			continue
+
+		# 合体後の全ブロック（結合先の既存＋入ってくるソース）の最終セルを検証する。
+		# 結合先を90度スナップ・整列させた結果、傾いた塊の先端などが既存ブロックの
+		# 同一セルへ飛び込む「重なり」を、確定前にここで弾く（不可なら次候補へ）。
+		if not _merged_placement_ok(t_data.tet, t_data.block, t_data.cell, final_target_cells, occupied_cells):
+			result.debug_points.append({"pos": t_data.pos, "reason": "Merge Overlap"})
+			continue
+
 		# すべてのパズル空間チェックを通過したため吸着を確定する
 		result.can_dock = true
 		result.target_tet = t_data.tet
@@ -900,6 +947,53 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 	if result.reason == "":
 		result.reason = "All Candidates Blocked"
 	return result
+
+
+# ドッキング確定前の最終検証（方針1＋2内包）。
+# 結合先(target_tet)を最寄り90度へスナップし base_block を base_cell に合わせた「合体後の姿勢」で、
+#   ・結合先の既存ブロックのスナップ後セル
+#   ・入ってくるソースブロックの最終セル(source_cells)
+# を全て算出し、(a)互いに重複しない かつ (b)他塊の占有セルと衝突しない ことを確認する。
+# これにより「90度回転スナップで傾いた塊の先端が既存ブロックの同一セルへ飛び込む」重なりを防ぐ。
+# Tetrominoが現在保持している有効ブロック数（消去無効でないCollisionShape2D）を数える。
+func _count_blocks(tet: Node) -> int:
+	if not is_instance_valid(tet):
+		return 0
+	var n: int = 0
+	for c in tet.get_children():
+		if c is CollisionShape2D and not c.disabled:
+			n += 1
+	return n
+
+
+func _merged_placement_ok(target_tet: Node, base_block: Node, base_cell: Vector2i, source_cells: Array, occupied_cells: Dictionary) -> bool:
+	if not is_instance_valid(target_tet) or not is_instance_valid(base_block):
+		return false
+	var rot: float = round(target_tet.rotation / (PI / 2.0)) * (PI / 2.0)
+	var used: Dictionary = {}
+
+	# 結合先の既存ブロックの「スナップ後」フレームセル（base_block を基準に回転後オフセットで算出）
+	for tb in target_tet.get_children():
+		if not (tb is CollisionShape2D) or tb.disabled:
+			continue
+		var off: Vector2 = (tb.position - base_block.position).rotated(rot)
+		var cell := base_cell + Vector2i(int(round(off.x / CELL_SIZE)), int(round(off.y / CELL_SIZE)))
+		if used.has(cell):
+			return false  # 結合先内で自己重複
+		if occupied_cells.has(cell) and occupied_cells[cell] != target_tet:
+			return false  # 他塊と衝突
+		used[cell] = true
+
+	# 入ってくるソースブロックの最終セル
+	for sc in source_cells:
+		if used.has(sc):
+			return false  # ソースと結合先（または互い）が同一セル
+		if occupied_cells.has(sc) and occupied_cells[sc] != target_tet:
+			return false  # 他塊と衝突
+		used[sc] = true
+
+	return true
+
 
 func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_blocks: Array, target_cells: Array, target_data: Dictionary, frame_origin: Vector2) -> bool:
 	# [SlowTrace] ドッキング実行。連鎖演出中(slow=true)に発火していれば、解放されるブロックが
@@ -951,12 +1045,18 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 	for i in range(source_blocks.size()):
 		var block = source_blocks[i]
 		var target_cell = target_cells[i]
-		
-		# 絶対グリッドでのマス目差分を計算
-		var cell_diff = target_cell - base_cell
-		
-		# 結合先（target_tet）のローカル座標系で、基準ブロックから差分マス目分ズラした正確な位置を算出
-		var exact_local_pos = base_block.position + Vector2(cell_diff.x * CELL_SIZE, cell_diff.y * CELL_SIZE)
+
+		# 検証時と同じ「絶対フレームセル」へ正確に配置する。
+		# 結合先が90度回転スナップされても最終グローバル座標が検証済みセルに一致するよう、
+		# 絶対セルのワールド座標を、結合先の最終姿勢のローカル座標へ逆変換する。
+		var exact_local_pos: Vector2
+		if target_pose_valid and is_instance_valid(pf_node):
+			var cell_global: Vector2 = pf_node.to_global(Vector2(target_cell.x * CELL_SIZE, target_cell.y * CELL_SIZE))
+			exact_local_pos = (cell_global - target_pos_final).rotated(-target_rot_final)
+		else:
+			# フォールバック（姿勢算出不可時）：従来どおり結合先ローカルでの差分配置
+			var cell_diff = target_cell - base_cell
+			exact_local_pos = base_block.position + Vector2(cell_diff.x * CELL_SIZE, cell_diff.y * CELL_SIZE)
 		
 		# 移籍による位置ズレを防ぐため、現在の見た目の絶対座標・角度を保存
 		var current_global_pos = block.global_position
