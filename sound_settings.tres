@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="SoundSettings" format=3 uid="uid://blkdhsxjcuihc"]
+
+[ext_resource type="AudioStream" uid="uid://dlm37uohjsb5u" path="res://assets/Sound/Business05-1(Reverb).mp3" id="1_cky5k"]
+[ext_resource type="Script" uid="uid://dy32jk3jpaxpv" path="res://SoundSettings.gd" id="1_snd"]
+
+[resource]
+script = ExtResource("1_snd")
+break_stream = ExtResource("1_cky5k")

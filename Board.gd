@@ -3,6 +3,10 @@ class_name Board
 
 signal resolve_started
 signal resolve_finished
+# ドッキング（吸着結合）が成立した瞬間。AudioManager がSE再生のために購読する。
+signal block_docked
+# ブロックが破壊（消去）された瞬間。連鎖数を渡し、SEのピッチ制御に使う。
+signal block_cleared(chain_count: int)
 
 var WIDTH: int = 10
 var HEIGHT: int = 20
@@ -547,7 +551,10 @@ func _execute_chain_queue(rule: int) -> void:
 			continue
 			
 		_current_chain_count += 1
-		
+
+		# ブロック破壊SE用に連鎖数を通知（ピッチは購読側で連鎖数に応じて上げる）
+		block_cleared.emit(_current_chain_count)
+
 		# スコア加算（連鎖数 chain を含める）
 		if is_instance_valid(score_manager) and score_manager.has_method("add_score"):
 			var popup_pos: Vector2 = _calculate_center_position(valid_group)
@@ -1085,6 +1092,9 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 		# キャッシュした安全な座標を用いてエフェクトを再生
 		if is_instance_valid(effect_manager) and effect_manager.has_method("play_snap_particles") and snap_effect_pos != Vector2.ZERO:
 			effect_manager.play_snap_particles(snap_effect_pos)
+
+		# ドッキング成立をSE用に通知
+		block_docked.emit()
 
 		# 解除: アニメーションが完全終了したので、結合先の凍結・排他ロックを解除して
 		# 物理演算や次の結合を許可する。速度を打ち消してから戻すことで飛び跳ねを防ぐ。

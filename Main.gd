@@ -2,12 +2,14 @@ extends Node2D
 
 @export var board_path: NodePath = NodePath("Board")
 @export var effect_manager_path: NodePath = NodePath("EffectManager")
+@export var audio_manager_path: NodePath = NodePath("AudioManager")
 @export var tetromino_scene: PackedScene
 
 @onready var ai_controller: AIController = get_node_or_null("AIController")
 
 var board: Board
 var effect_manager: EffectManager
+var audio_manager: AudioManager
 var active_tetromino: Tetromino
 var _is_busy: bool = false
 var game_settings: GameSettings = preload("res://game_settings.tres")
@@ -32,11 +34,20 @@ func _ready() -> void:
 
 	board = get_node_or_null(board_path) as Board
 	effect_manager = get_node_or_null(effect_manager_path) as EffectManager
-	
+	audio_manager = get_node_or_null(audio_manager_path) as AudioManager
+
 	# 連鎖完了時に保留していた新しいブロックを生成するためシグナルを接続
 	if is_instance_valid(board):
 		board.resolve_finished.connect(_spawn_tetromino)
-		
+		# サウンド連携：ドッキング/ブロック破壊のSEを AudioManager へ橋渡し（シグナルで疎結合）
+		if is_instance_valid(audio_manager):
+			board.block_docked.connect(audio_manager.play_dock_se)
+			board.block_cleared.connect(audio_manager.play_break_se)
+
+	# ゲーム本編開始：BGMをループ再生する
+	if is_instance_valid(audio_manager):
+		audio_manager.play_bgm()
+
 	_spawn_tetromino()
 
 	# AIControllerが存在する場合、Mainの参照を渡してセットアップを実行

@@ -10,6 +10,7 @@
 [ext_resource type="PackedScene" uid="uid://rat28ba86mqx" path="res://snap_particles.tscn" id="7_wkp8b"]
 [ext_resource type="Script" uid="uid://bkuj0rdthx5ss" path="res://AIController.gd" id="8_trn2v"]
 [ext_resource type="Script" uid="uid://bkpi8cgk10jyn" path="res://BoardPhysicsFrame.gd" id="9_bframe"]
+[ext_resource type="Script" uid="uid://dpfoqmnsx7v17" path="res://AudioManager.gd" id="10_audio"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_lgr22"]
 size = Vector2(32, 700)
@@ -83,6 +84,9 @@ shake_intensity = 20.0
 shake_duration = 0.25
 flash_rect_path = NodePath("../FlashLayer/FlashRect")
 snap_particle_scene = ExtResource("7_wkp8b")
+
+[node name="AudioManager" type="Node" parent="." unique_id=18063616]
+script = ExtResource("10_audio")
 
 [node name="FlashLayer" type="CanvasLayer" parent="." unique_id=1894259145]
 layer = 10
