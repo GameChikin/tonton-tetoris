@@ -1129,6 +1129,15 @@ func _apply_dynamic_board_size() -> void:
 		right_shape.position = Vector2(pixel_width + wall_thickness / 2.0, pixel_height / 2.0)
 		physics_frame.call_deferred("add_child", right_shape)
 
+		# 4. カメラを「盤面＋取っ手」の中心に合わせる（取っ手が画面外に切れないようにする）
+		var cam = get_node_or_null("../Camera2D") as Camera2D
+		if cam:
+			var handle_radius: float = settings.handle_radius if settings != null else 60.0
+			var handle_thickness: float = settings.handle_thickness if settings != null else 16.0
+			# 取っ手は盤面右端から右へ膨らむため、見える内容の右端はここまで伸びる
+			var content_right: float = pixel_width + handle_radius + handle_thickness / 2.0 + 4.0
+			cam.global_position = physics_frame.global_position + Vector2(content_right / 2.0, pixel_height / 2.0)
+
 
 func check_deadline_exceeded(y_threshold: float) -> bool:
 	for child in get_children():

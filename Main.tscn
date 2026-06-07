@@ -22,7 +22,7 @@ script = ExtResource("1_1m0qt")
 tetromino_scene = ExtResource("4_hum6p")
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=1607763585]
-position = Vector2(160, 320)
+position = Vector2(190, 320)
 
 [node name="Board" type="Node2D" parent="." unique_id=1510623832]
 script = ExtResource("2_f63ok")
@@ -98,18 +98,59 @@ color = Color(1, 1, 1, 0.39215687)
 
 [node name="ScoreUI" type="CanvasLayer" parent="." unique_id=452029060]
 
+[node name="BoardBackground" type="ColorRect" parent="ScoreUI" unique_id=317451855]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -300.0
+offset_top = 50.0
+offset_right = -50.0
+offset_bottom = 133.0
+grow_horizontal = 0
+mouse_filter = 2
+color = Color(0.099985994, 0.099985994, 0.099985994, 0.38431373)
+
 [node name="ScoreLabel" type="Label" parent="ScoreUI" unique_id=140365978]
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -325.0
-offset_top = 190.0
-offset_right = -86.90503
-offset_bottom = 256.0
+offset_left = -320.0
+offset_top = 50.0
+offset_right = -70.0
+offset_bottom = 133.0
 grow_horizontal = 0
-theme_override_font_sizes/font_size = 60
+size_flags_horizontal = 8
+theme_override_colors/font_color = Color(0.9969836, 0.9856095, 0, 1)
+theme_override_font_sizes/font_size = 45
 horizontal_alignment = 2
+vertical_alignment = 1
 metadata/_edit_use_anchors_ = true
+
+[node name="TimePanel" type="ColorRect" parent="ScoreUI" unique_id=317451856]
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -75.0
+offset_top = 50.0
+offset_right = 75.0
+offset_bottom = 133.0
+grow_horizontal = 2
+mouse_filter = 2
+color = Color(0.099985994, 0.099985994, 0.099985994, 0.38431373)
+
+[node name="TimeLabel" type="Label" parent="ScoreUI" unique_id=317451857]
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -100.0
+offset_top = 50.0
+offset_right = 100.0
+offset_bottom = 133.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 45
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 1
 
 [node name="ScoreManager" type="Node" parent="." unique_id=1099065445]
 script = ExtResource("6_3dxm6")
@@ -123,16 +164,32 @@ script = ExtResource("8_trn2v")
 visible = false
 
 [node name="Button_Retry" type="Button" parent="ResultUI" unique_id=700042560]
-offset_left = 613.0
-offset_top = 315.0
-offset_right = 621.0
-offset_bottom = 323.0
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -90.0
+offset_top = 40.0
+offset_right = 90.0
+offset_bottom = 90.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "RETRY"
 
 [node name="Button2" type="Button" parent="ResultUI" unique_id=256285867]
-offset_left = 618.0
-offset_top = 321.0
-offset_right = 626.0
-offset_bottom = 329.0
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -90.0
+offset_top = 100.0
+offset_right = 90.0
+offset_bottom = 150.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "TITLE"
 
 [node name="Label" type="Label" parent="ResultUI" unique_id=373656617]
 anchors_preset = 8
@@ -162,6 +219,45 @@ grow_horizontal = 2
 grow_vertical = 2
 text = "SCORE"
 
+[node name="MenuUI" type="CanvasLayer" parent="." unique_id=482910551]
+layer = 5
+
+[node name="HamburgerButton" type="Button" parent="MenuUI" unique_id=482910552]
+offset_left = 12.0
+offset_top = 12.0
+offset_right = 72.0
+offset_bottom = 72.0
+theme_override_font_sizes/font_size = 40
+text = "≡"
+
+[node name="MenuPanel" type="PanelContainer" parent="MenuUI" unique_id=482910553]
+visible = false
+offset_left = 12.0
+offset_top = 80.0
+offset_right = 252.0
+offset_bottom = 220.0
+
+[node name="MarginContainer" type="MarginContainer" parent="MenuUI/MenuPanel" unique_id=482910554]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MenuUI/MenuPanel/MarginContainer" unique_id=482910555]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Button_BackToTitle" type="Button" parent="MenuUI/MenuPanel/MarginContainer/VBoxContainer" unique_id=482910556]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Title"
+
+[node name="Button_RetryMenu" type="Button" parent="MenuUI/MenuPanel/MarginContainer/VBoxContainer" unique_id=482910557]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Retry"
+
 [node name="DeadlineLine" type="Line2D" parent="." unique_id=223872109]
 
 [node name="WarningRect" type="ColorRect" parent="." unique_id=1059526404]
@@ -170,3 +266,6 @@ offset_bottom = 40.0
 
 [connection signal="pressed" from="ResultUI/Button_Retry" to="." method="retry_game"]
 [connection signal="pressed" from="ResultUI/Button2" to="." method="go_to_title"]
+[connection signal="pressed" from="MenuUI/HamburgerButton" to="." method="toggle_menu"]
+[connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_BackToTitle" to="." method="go_to_title"]
+[connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_RetryMenu" to="." method="retry_game"]

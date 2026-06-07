@@ -2,6 +2,11 @@ extends Node
 
 const SAVE_FILE_PATH = "user://save_data.save"
 
+## ゲームモード。タイトル画面で選択し、Mainシーンで参照する。
+enum GameMode { ENDLESS, TIME_ATTACK }
+## タイトルで選ばれたモード（シーン遷移をまたいで保持する）
+var selected_mode: int = GameMode.ENDLESS
+
 var high_score: int = 0
 var max_chain_all_time: int = 0
 

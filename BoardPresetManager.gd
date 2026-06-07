@@ -139,9 +139,15 @@ class_name BoardPresetManager
 }
 
 var _button_container: VBoxContainer
+var settings: GameSettings = preload("res://game_settings.tres")
 
 
 func _ready() -> void:
+	# 設定でデバッグ用テンプレート選択を無効化している場合は、パネルごと隠して何も生成しない
+	if is_instance_valid(settings) and not settings.show_debug_presets:
+		visible = false
+		return
+
 	_button_container = get_node_or_null(button_container_path) as VBoxContainer
 
 	if _button_container == null:

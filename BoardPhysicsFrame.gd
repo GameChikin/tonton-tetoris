@@ -40,7 +40,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _physics_process(delta: float) -> void:
 	if _is_dragging:
-		var target_pos: Vector2 = get_global_mouse_position() - _drag_offset
+		# マウス追従先を、まず可動範囲（枠＋取っ手が画面端からはみ出さない範囲）にクランプする
+		var target_pos: Vector2 = _clamp_to_view(get_global_mouse_position() - _drag_offset)
 		# 1物理フレームの移動量に上限を設ける。壁が一度にブロックをまたぐほど飛ぶと
 		# すり抜け（トンネリング）が起きるため、最大追従速度でクランプする。
 		var max_speed: float = _get_setting("max_frame_drag_speed", 0.0)
@@ -50,6 +51,42 @@ func _physics_process(delta: float) -> void:
 			global_position = target_pos
 		else:
 			global_position += to_target.normalized() * max_step
+
+
+# 見える内容（盤面＋取っ手）の外接矩形を、枠原点(global_position)からの相対座標で返す
+func _get_content_rect() -> Rect2:
+	var content: Rect2 = Rect2(Vector2.ZERO, Vector2(_board_width, _board_height))
+	# 右へ膨らむ取っ手の掴み判定矩形を含める
+	return content.merge(_grab_rect)
+
+
+# 枠＋取っ手（＋マージン）がカメラの表示領域からはみ出さないよう、目標位置をクランプする
+func _clamp_to_view(pos: Vector2) -> Vector2:
+	var vp: Viewport = get_viewport()
+	if vp == null:
+		return pos
+	var cam: Camera2D = vp.get_camera_2d()
+	if cam == null:
+		return pos
+
+	# カメラの表示領域（ワールド座標）
+	var view_size: Vector2 = vp.get_visible_rect().size / cam.zoom
+	var view_center: Vector2 = cam.get_screen_center_position()
+	var view_min: Vector2 = view_center - view_size * 0.5
+	var view_max: Vector2 = view_center + view_size * 0.5
+
+	var margin: float = _get_setting("frame_drag_screen_margin", 24.0)
+	var content: Rect2 = _get_content_rect()
+
+	# pos + content が [view_min+margin, view_max-margin] に収まる原点の許容範囲
+	var min_pos: Vector2 = view_min + Vector2(margin, margin) - content.position
+	var max_pos: Vector2 = view_max - Vector2(margin, margin) - (content.position + content.size)
+
+	var result: Vector2 = pos
+	# 内容が表示領域より大きい軸は、はみ出しを最小化するため中央に固定する
+	result.x = clamp(pos.x, min_pos.x, max_pos.x) if min_pos.x <= max_pos.x else (min_pos.x + max_pos.x) * 0.5
+	result.y = clamp(pos.y, min_pos.y, max_pos.y) if min_pos.y <= max_pos.y else (min_pos.y + max_pos.y) * 0.5
+	return result
 
 
 # 盤面のサイズ変更に合わせて、取っ手（掴み判定＋見た目）を再構築する

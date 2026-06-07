@@ -17,6 +17,11 @@ var game_over_timer: float = 0.0
 var _spawn_timer: float = 0.0
 var _survival_time: float = 0.0
 
+# --- タイムアタック関連 ---
+var _is_time_attack: bool = false
+var _time_remaining: float = 0.0
+var time_label: Label
+
 
 func _ready() -> void:
 	# --- 設定値のデバッグログ出力 ---
@@ -54,6 +59,19 @@ func _ready() -> void:
 		warning_rect.size = Vector2(10000, 5000)
 		warning_rect.color = Color(1.0, 0.0, 0.0, 0.0) # 透明
 
+	# --- ゲームモードの初期化（タイトルで選択された値を参照）---
+	_is_time_attack = SaveManager.selected_mode == SaveManager.GameMode.TIME_ATTACK
+	time_label = get_node_or_null("ScoreUI/TimeLabel")
+	var time_panel = get_node_or_null("ScoreUI/TimePanel")
+	if _is_time_attack and is_instance_valid(game_settings):
+		_time_remaining = game_settings.time_attack_duration
+	# エンドレスモードでは中央上のタイム表示を隠す
+	if is_instance_valid(time_label):
+		time_label.visible = _is_time_attack
+	if is_instance_valid(time_panel):
+		time_panel.visible = _is_time_attack
+	_update_time_label()
+
 
 func _input(_event: InputEvent) -> void:
 	# トントンギミックは廃止され、_processでの入力ポーリングへ移行したため破棄
@@ -83,7 +101,18 @@ func _spawn_tetromino() -> void:
 func _process(delta: float) -> void:
 	if _is_busy:
 		return
-		
+
+	# --- タイムアタック：制限時間のカウントダウン（0でゲームオーバー）---
+	if _is_time_attack:
+		var ta_resolving: bool = is_instance_valid(board) and board.has_method("is_chain_active") and board.is_chain_active()
+		# 連鎖演出中はデッドライン判定と同様にタイマーも凍結する
+		if not ta_resolving:
+			_time_remaining = max(0.0, _time_remaining - delta)
+			_update_time_label()
+			if _time_remaining <= 0.0:
+				game_over()
+				return
+
 	if is_instance_valid(board) and board.has_method("check_deadline_exceeded"):
 		var threshold_offset = 0.0
 		var grace = 2.0
@@ -150,6 +179,13 @@ func _process(delta: float) -> void:
 			_spawn_tetromino()
 
 
+func _update_time_label() -> void:
+	if not is_instance_valid(time_label):
+		return
+	# 残り時間を切り上げた秒数のみで表示（例: 120 → 0 で終了）
+	time_label.text = str(int(ceil(_time_remaining)))
+
+
 func load_preset_board(preset_matrix: Array) -> void:
 	if _is_busy:
 		return
@@ -207,6 +243,12 @@ func game_over() -> void:
 		result_ui.show()
 		if result_ui.has_method("show_result"):
 			result_ui.show_result(final_score, max_chain, SaveManager.high_score)
+
+func toggle_menu() -> void:
+	var menu_panel = get_node_or_null("MenuUI/MenuPanel")
+	if is_instance_valid(menu_panel):
+		menu_panel.visible = not menu_panel.visible
+
 
 func retry_game() -> void:
 	get_tree().paused = false

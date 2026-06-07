@@ -73,6 +73,10 @@ class_name GameSettings
 ## ブロックがデッドラインを越えてから、実際にゲームオーバーになるまでの猶予時間（秒）です。
 @export var game_over_grace_period: float = 2.0
 
+@export_group("Time Attack")
+## タイムアタックモードの制限時間（秒）です。0になった瞬間にゲームオーバーになります。
+@export var time_attack_duration: float = 120.0
+
 @export_group("Board Handle (Drag Grip)")
 ## 盤面を掴んで動かす「持ち手（ジョッキの取っ手）」の大きさ（半径ピクセル）です。大きいほど掴みやすくなります。
 @export var handle_radius: float = 60.0
@@ -87,6 +91,14 @@ class_name GameSettings
 ## すり抜け防止は sync_to_physics と封じ込め安全網が担うため、通常は 0 でよい。
 ## 正の値を入れた時だけ、その速度で追従を平滑化（鈍く）します。
 @export var max_frame_drag_speed: float = 0.0
+## 枠をドラッグで動かせる範囲のマージン（ピクセル）です。
+## 枠＋取っ手が画面端からこの距離より内側に収まるよう、可動範囲をクランプします。
+@export var frame_drag_screen_margin: float = 24.0
+
+@export_group("Debug")
+## デバッグ用：盤面テンプレートを選択するボタン（画面左上のパネル）を表示するかどうかです。
+## リリース時（itch公開など）はオフにしてプレイヤーから隠してください。
+@export var show_debug_presets: bool = true
 
 
 func print_all_settings() -> void:
@@ -116,4 +128,6 @@ func print_all_settings() -> void:
 	print("ai_enabled: ", ai_enabled)
 	print("ai_action_delay: ", ai_action_delay)
 	print("drop_center_offset: ", drop_center_offset)
+	print("[Debug]")
+	print("show_debug_presets: ", show_debug_presets)
 	print("===================================")
