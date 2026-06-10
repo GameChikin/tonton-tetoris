@@ -29,6 +29,10 @@ window/stretch/mode="canvas_items"
 
 movie_writer/movie_file="D:/Godot/tonton-tetoris/movie/output.avi"
 
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/movie_timestamp/plugin.cfg")
+
 [input]
 
 move_left={

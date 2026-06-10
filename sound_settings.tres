@@ -2,7 +2,11 @@
 
 [ext_resource type="AudioStream" uid="uid://dlm37uohjsb5u" path="res://assets/Sound/Business05-1(Reverb).mp3" id="1_cky5k"]
 [ext_resource type="Script" uid="uid://dy32jk3jpaxpv" path="res://SoundSettings.gd" id="1_snd"]
+[ext_resource type="AudioStream" uid="uid://dpbmk84vrucsw" path="res://assets/Sound/NES-JP-A01-2(Title-Loop115).mp3" id="1_x4oq2"]
+[ext_resource type="AudioStream" uid="uid://cs88o3wftjnqx" path="res://assets/Sound/Hit-Punch07-1(Dry).wav" id="3_1wyli"]
 
 [resource]
 script = ExtResource("1_snd")
+bgm_stream = ExtResource("1_x4oq2")
+dock_stream = ExtResource("3_1wyli")
 break_stream = ExtResource("1_cky5k")

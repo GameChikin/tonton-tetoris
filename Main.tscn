@@ -11,12 +11,25 @@
 [ext_resource type="Script" uid="uid://bkuj0rdthx5ss" path="res://AIController.gd" id="8_trn2v"]
 [ext_resource type="Script" uid="uid://bkpi8cgk10jyn" path="res://BoardPhysicsFrame.gd" id="9_bframe"]
 [ext_resource type="Script" uid="uid://dpfoqmnsx7v17" path="res://AudioManager.gd" id="10_audio"]
+[ext_resource type="Script" uid="uid://cdyndb4jc5bir" path="res://ResultUI.gd" id="11_result"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_lgr22"]
 size = Vector2(32, 700)
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_trn2v"]
 size = Vector2(384, 32)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_result_window"]
+bg_color = Color(0, 0, 0, 0.7)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1, 1, 1, 0.25)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
 
 [node name="Main" type="Node2D" unique_id=1283422931]
 script = ExtResource("1_1m0qt")
@@ -27,7 +40,6 @@ position = Vector2(190, 320)
 
 [node name="Board" type="Node2D" parent="." unique_id=1510623832]
 script = ExtResource("2_f63ok")
-docking_distance_threshold = 60.0
 
 [node name="BoardPhysicsFrame" type="AnimatableBody2D" parent="Board" unique_id=1727947734]
 scale = Vector2(1, 0.9967025)
@@ -166,62 +178,76 @@ script = ExtResource("8_trn2v")
 
 [node name="ResultUI" type="CanvasLayer" parent="." unique_id=871343484]
 visible = false
+script = ExtResource("11_result")
 
-[node name="Button_Retry" type="Button" parent="ResultUI" unique_id=700042560]
+[node name="Dim" type="ColorRect" parent="ResultUI" unique_id=700042561]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.5)
+
+[node name="Window" type="PanelContainer" parent="ResultUI" unique_id=700042562]
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -90.0
-offset_top = 40.0
-offset_right = 90.0
-offset_bottom = 90.0
+offset_left = -180.0
+offset_top = -170.0
+offset_right = 180.0
+offset_bottom = 170.0
 grow_horizontal = 2
 grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_result_window")
+
+[node name="Margin" type="MarginContainer" parent="ResultUI/Window" unique_id=700042563]
+layout_mode = 2
+theme_override_constants/margin_left = 28
+theme_override_constants/margin_top = 28
+theme_override_constants/margin_right = 28
+theme_override_constants/margin_bottom = 28
+
+[node name="VBox" type="VBoxContainer" parent="ResultUI/Window/Margin" unique_id=700042564]
+layout_mode = 2
+theme_override_constants/separation = 16
+alignment = 1
+
+[node name="TitleLabel" type="Label" parent="ResultUI/Window/Margin/VBox" unique_id=373656617]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 40
+text = "GAME OVER"
+horizontal_alignment = 1
+
+[node name="ScoreLabel" type="Label" parent="ResultUI/Window/Margin/VBox" unique_id=1826322163]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 24
+text = "SCORE  0"
+horizontal_alignment = 1
+
+[node name="HighScoreLabel" type="Label" parent="ResultUI/Window/Margin/VBox" unique_id=1826322164]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_font_sizes/font_size = 20
+text = "HI-SCORE  0"
+horizontal_alignment = 1
+
+[node name="Spacer" type="Control" parent="ResultUI/Window/Margin/VBox" unique_id=700042565]
+custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
+
+[node name="Button_Retry" type="Button" parent="ResultUI/Window/Margin/VBox" unique_id=700042560]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
 text = "RETRY"
 
-[node name="Button2" type="Button" parent="ResultUI" unique_id=256285867]
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -90.0
-offset_top = 100.0
-offset_right = 90.0
-offset_bottom = 150.0
-grow_horizontal = 2
-grow_vertical = 2
+[node name="Button2" type="Button" parent="ResultUI/Window/Margin/VBox" unique_id=256285867]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
 text = "TITLE"
-
-[node name="Label" type="Label" parent="ResultUI" unique_id=373656617]
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -44.0
-offset_top = -49.0
-offset_right = 44.0
-offset_bottom = -26.0
-grow_horizontal = 2
-grow_vertical = 2
-text = "GAMEOVER"
-
-[node name="Label2" type="Label" parent="ResultUI" unique_id=1826322163]
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -44.0
-offset_top = -24.0
-offset_right = 44.0
-offset_bottom = -1.0
-grow_horizontal = 2
-grow_vertical = 2
-text = "SCORE"
 
 [node name="MenuUI" type="CanvasLayer" parent="." unique_id=482910551]
 process_mode = 3
@@ -269,8 +295,8 @@ text = "Retry"
 offset_right = 40.0
 offset_bottom = 40.0
 
-[connection signal="pressed" from="ResultUI/Button_Retry" to="." method="retry_game"]
-[connection signal="pressed" from="ResultUI/Button2" to="." method="go_to_title"]
+[connection signal="pressed" from="ResultUI/Window/Margin/VBox/Button_Retry" to="." method="retry_game"]
+[connection signal="pressed" from="ResultUI/Window/Margin/VBox/Button2" to="." method="go_to_title"]
 [connection signal="pressed" from="MenuUI/HamburgerButton" to="." method="toggle_menu"]
 [connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_BackToTitle" to="." method="go_to_title"]
 [connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_RetryMenu" to="." method="retry_game"]

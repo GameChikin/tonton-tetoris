@@ -8,10 +8,6 @@ class_name GameSettings
 @export var board_height_cells: int = 20
 ## 現在のゲームルールです。0がテトリス風（横一列で消去）、1がぷよぷよ風（隣接数で消去）として扱われます。
 @export_enum("Tetris", "Puyo") var current_rule: int = 0
-## 下入力でブロックを叩き落とす（トントン落下）際の、落下の速さです。
-@export var tonton_drop_speed: float = 0.02
-## トントン落下が発動した際に、一度に落下させる距離（ピクセル）です。
-@export var tonton_drop_distance: int = 20
 ## ブロックが消滅するために必要な条件です（テトリスなら横一列に必要なマス数、ぷよぷよなら隣接必要なブロック数）。
 @export var clear_threshold: int = 8
 ## ブロックの抽選に使用する色の種類数です（2〜12）。多いほど同色が揃いにくく難しく、少ないほど易しくなります。
@@ -19,11 +15,15 @@ class_name GameSettings
 ## ブロックが揃ってから、実際に消滅（爆発）するまでの待機時間（秒）です。連鎖の演出に使われます。
 @export var line_clear_hold_time: float = 1.5
 ## 盤面の物理的な横幅（ピクセル）です。当たり判定やUIの基準サイズとして使用されます。
+## ※実行時に board_width_cells × セルサイズ で自動的に上書きされるため、インスペクタでの手動編集は反映されません（ランタイム用キャッシュ）。
 @export var board_width_px: float = 320.0
 ## ブロック消滅時や激しい衝突時に発生する、衝撃波エフェクトの判定半径です。
 @export var shockwave_radius: float = 96.0
 ## 衝撃波エフェクトを描画する際の、半透明度（0.0〜1.0）です。
 @export var shockwave_fill_alpha: float = 0.3
+## ドッキング成立時に「パチッ」と同時に弾ける、円形の衝撃波（リング）の最大半径です。
+## 消去時の衝撃波(shockwave_radius)とは独立。0にするとリングを出しません。
+@export var dock_shockwave_radius: float = 64.0
 ## 連鎖が発生した際、次の連鎖判定が行われるまでの間隔（秒）です。
 @export var chain_interval_time: float = 0.3
 
@@ -40,10 +40,6 @@ class_name GameSettings
 @export var fast_forward_spawn_interval: float = 0.15
 
 @export_group("Tetromino Physics & Snap")
-## ブロックの移動速度がこの値を下回ると、「静止した」とみなされやすくなります。
-@export var sleep_threshold_velocity: float = 15.0
-## 速度がしきい値を下回ってから、実際に物理演算がスリープ（盤面にロック）されるまでの猶予時間（秒）です。
-@export var sleep_delay_time: float = 0.2
 ## ブロックが空中で正しい角度（90度単位）に自動補正されようとする力の強さです。
 @export var snap_rotation_strength: float = 12.0
 ## 角度の自動補正が有効になる、ズレの限界角度（度）です。これ以上傾いていると補正されません。
@@ -52,11 +48,27 @@ class_name GameSettings
 @export var snap_x_strength: float = 8.0
 ## X座標の引き寄せが有効になる、マス中心からのズレの限界距離（ピクセル）です。
 @export var snap_x_limit: float = 12.0
+
+@export_group("Docking Settings")
+## 吸着（ドッキング）判定の距離しきい値（ピクセル）。【通常時＝盤面上の自動結合】に使われます。
+## 小さくするほど、放置したブロック同士が勝手にくっつきにくくなります。
+@export var docking_distance_threshold: float = 38.0
+## 吸着（ドッキング）判定の距離しきい値（ピクセル）。【プレイヤーがつかんで動かしている時】に使われます。
+## 通常時より大きくするほど、少し離れていても気持ちよく吸い付いて結合します。
+@export var drag_docking_distance_threshold: float = 60.0
+## 同色ブロックとしか結合（ドッキング）できないようにするかどうかです。
+@export var require_same_color: bool = true
 ## 一度の判定で、同時に自動結合（ドッキング）できるブロックの最大数です。
 @export var max_auto_dock_blocks: int = 4
 ## ドッキング時に、結合先をグリッドへ吸着させ、ブロックを所定位置へ移動させる補間アニメーションの時間（秒）です。
 ## 0にすると瞬間移動（アニメなし）になります。
 @export var docking_anim_duration: float = 0.15
+## 「パチッ」とはじけるエフェクトを、ブロックが所定位置に着地した瞬間を基準に何秒ずらすかです。
+## 0=着地と同時。マイナス=着地直前に弾けて先取り感（アンティシペーション）。プラス=着地後に一拍おいてタメ感。
+## アニメ時間(docking_anim_duration)を変えても自動で着地と同期するので、ここは微調整だけで済みます。
+@export var snap_effect_offset: float = 0.0
+## デバッグ用：吸着判定エリア（赤い円）と、結合できなかった理由を画面に描画するかどうかです。
+@export var show_debug_docking: bool = false
 
 @export_group("AI Settings")
 ## AIによる自動操作（デモプレイや敵など）を有効にするかどうかの設定です。
@@ -71,6 +83,12 @@ class_name GameSettings
 @export var game_over_y_threshold: float = -300.0
 ## ブロックがデッドラインを越えてから、実際にゲームオーバーになるまでの猶予時間（秒）です。
 @export var game_over_grace_period: float = 2.0
+## ラインより下に戻った時、危険タイマー（赤い警告）が回復する速さの倍率です。
+## 1.0なら越えていた時間と同じ速さで戻り、大きいほど早く回復します。0にすると一切回復しません。
+@export var game_over_recovery_rate: float = 1.5
+## デッドライン判定の対象とするブロックの最大速度(px/s)です。これ以下の速度なら「積まれている」とみなし判定対象にします。
+## 物理ベースで常に微振動するため、ある程度大きい値にしないと揺れた瞬間に判定対象から外れてしまいます。
+@export var game_over_velocity_threshold: float = 120.0
 
 @export_group("Time Attack")
 ## タイムアタックモードの制限時間（秒）です。0になった瞬間にゲームオーバーになります。
@@ -112,8 +130,6 @@ func print_all_settings() -> void:
 	print("board_width_cells: ", board_width_cells)
 	print("board_height_cells: ", board_height_cells)
 	print("current_rule: ", "Tetris" if current_rule == 0 else "Puyo")
-	print("tonton_drop_speed: ", tonton_drop_speed)
-	print("tonton_drop_distance: ", tonton_drop_distance)
 	print("clear_threshold: ", clear_threshold)
 	print("block_color_count: ", block_color_count)
 	print("line_clear_hold_time: ", line_clear_hold_time)
@@ -121,18 +137,29 @@ func print_all_settings() -> void:
 	print("max_frame_drag_speed: ", max_frame_drag_speed)
 	
 	print("[Tetromino Physics & Snap]")
-	print("sleep_threshold_velocity: ", sleep_threshold_velocity)
-	print("sleep_delay_time: ", sleep_delay_time)
 	print("snap_rotation_strength: ", snap_rotation_strength)
 	print("snap_rotation_limit: ", snap_rotation_limit)
 	print("snap_x_strength: ", snap_x_strength)
 	print("snap_x_limit: ", snap_x_limit)
+	print("[Docking Settings]")
+	print("docking_distance_threshold: ", docking_distance_threshold)
+	print("drag_docking_distance_threshold: ", drag_docking_distance_threshold)
+	print("require_same_color: ", require_same_color)
 	print("max_auto_dock_blocks: ", max_auto_dock_blocks)
+	print("docking_anim_duration: ", docking_anim_duration)
+	print("snap_effect_offset: ", snap_effect_offset)
+	print("dock_shockwave_radius: ", dock_shockwave_radius)
+	print("show_debug_docking: ", show_debug_docking)
 	
 	print("[AI Settings]")
 	print("ai_enabled: ", ai_enabled)
 	print("ai_action_delay: ", ai_action_delay)
 	print("drop_center_offset: ", drop_center_offset)
+	print("[Game Over Settings]")
+	print("game_over_y_threshold: ", game_over_y_threshold)
+	print("game_over_grace_period: ", game_over_grace_period)
+	print("game_over_recovery_rate: ", game_over_recovery_rate)
+	print("game_over_velocity_threshold: ", game_over_velocity_threshold)
 	print("[Debug]")
 	print("show_debug_presets: ", show_debug_presets)
 	print("===================================")

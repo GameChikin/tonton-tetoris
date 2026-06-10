@@ -17,11 +17,6 @@ enum GameRule { TETRIS, PUYO }
 @export var score_manager_path: NodePath = NodePath("../ScoreManager")
 @export var block_scene: PackedScene = preload("res://Block.tscn")
 
-@export_group("Docking Settings")
-@export var docking_distance_threshold: float = 38.0 # 吸着判定を行う直線距離
-@export var require_same_color: bool = true # 同色ブロックとしか結合できないようにするか
-@export var show_debug_docking: bool = false # 判定エリアと拒否理由を画面に描画するか
-
 var settings: GameSettings = preload("res://game_settings.tres")
 
 var effect_manager: EffectManager
@@ -70,6 +65,16 @@ func _ready() -> void:
 	# EffectManagerの演出開始/終了に合わせて、盤面をスローモーション（泥沼状態）にするシグナルを接続
 	if is_instance_valid(effect_manager) and not effect_manager.slow_motion_requested.is_connected(set_board_slow_motion):
 		effect_manager.slow_motion_requested.connect(set_board_slow_motion)
+
+	# デバッグ吸着円を「枠・背景・ブロックより手前」に描くための最前面オーバーレイを生成する。
+	# Board本体の_draw()は子ノード（不透明な背景ColorRectなど）に隠れて見えないため、
+	# z_index を最大近くに設定した専用ノードへ描画を逃がす（draw シグナルで描画処理を購読）。
+	_debug_overlay = Node2D.new()
+	_debug_overlay.name = "DebugOverlay"
+	_debug_overlay.z_index = 4096          # 同一CanvasLayer内で実質最前面
+	_debug_overlay.z_as_relative = false   # 親のzに依存せず絶対的に最前面化
+	add_child(_debug_overlay)
+	_debug_overlay.draw.connect(_on_debug_overlay_draw)
 
 
 # ポーズ中（連鎖インターバル中）のプレイヤー介入（アクティブ連鎖）を検知する
@@ -335,6 +340,10 @@ func _physics_process(delta: float) -> void:
 		_scan_for_auto_docking()
 	
 	# 連鎖中も判定を回し続けるため、_is_resolving によるブロックを撤廃
+
+	# デバッグ吸着円を最前面オーバーレイで毎フレーム更新（移動中のブロックにも追従させる）。フラグON時のみ。
+	if settings != null and settings.show_debug_docking and is_instance_valid(_debug_overlay):
+		_debug_overlay.queue_redraw()
 
 	if settings.current_rule == 0: # Tetris
 		_evaluate_tetris_lines(delta)
@@ -756,25 +765,28 @@ func _calculate_center_position(blocks: Array[Node]) -> Vector2:
 var _debug_info: Dictionary = {}
 
 func request_docking(source_tet: Tetromino) -> bool:
-	var eval = _evaluate_docking(source_tet)
+	# プレイヤーがつかんで動かしている塊の結合要求。緩めの距離で判定して気持ちよく吸着させる。
+	var eval = _evaluate_docking(source_tet, true)
 	_debug_info = eval
 	
 	
 	if eval.can_dock:
 		var physics_frame = get_node_or_null("BoardPhysicsFrame")
 		if physics_frame:
-			# ★ eval.target_data を追加で渡す
-			return _execute_docking(source_tet, eval.target_tet, eval.source_blocks, eval.target_cells, eval.target_data, physics_frame.global_position)
+			# ★ eval.target_data と、きっかけになったソース側マッチブロックを渡す
+			return _execute_docking(source_tet, eval.target_tet, eval.source_blocks, eval.target_cells, eval.target_data, physics_frame.global_position, eval.source_match_block)
 	return false
 
 # 判定ロジックの本体（距離と最寄りマスに基づく寛容な判定）
-func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
+# is_player_dock: プレイヤーがつかんで動かしている塊の判定なら true。距離しきい値を緩める。
+func _evaluate_docking(source_tet: Tetromino, is_player_dock: bool = false) -> Dictionary:
 	var result = {
 		"can_dock": false,
 		"target_tet": null,
 		"target_cells": [],
 		"source_blocks": [],
 		"target_data": null,
+		"source_match_block": null,  # 判定のきっかけになった「同色隣接ペア」のソース側ブロック
 		"reason": "",
 		"debug_points": []
 	}
@@ -825,12 +837,17 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 		if block is CollisionShape2D and not block.disabled:
 			source_blocks.append(block)
 
-	var is_player_dragging = source_tet.get("_is_dragging_by_player") if source_tet.has_method("get") else false
-
 	# 1. 有効距離内にあるすべてのペアを候補として収集
+	# プレイヤー操作中は緩め、通常（自動結合）は厳しめのしきい値を使い分ける。
+	var dock_threshold: float
+	if is_player_dock:
+		dock_threshold = settings.drag_docking_distance_threshold if settings != null else 60.0
+	else:
+		dock_threshold = settings.docking_distance_threshold if settings != null else 38.0
+	var require_same: bool = settings.require_same_color if settings != null else true
 	var candidate_matches = []
 	var closest_dist_for_debug = INF
-	
+
 	for s_block in source_blocks:
 		var s_pos = s_block.global_position
 		var s_color_id = s_block.get_meta("color_id") if s_block.has_meta("color_id") else ""
@@ -839,9 +856,9 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 			var dist = s_pos.distance_to(t_data.pos)
 			if dist < closest_dist_for_debug: closest_dist_for_debug = dist
 			
-			if dist <= docking_distance_threshold:
+			if dist <= dock_threshold:
 				# 色チェックフラグが有効かつ色が異なる場合は、デバッグ点のみ登録して候補から除外
-				if require_same_color and s_color_id != "" and t_data.color_id != "" and s_color_id != t_data.color_id:
+				if require_same and s_color_id != "" and t_data.color_id != "" and s_color_id != t_data.color_id:
 					result.debug_points.append({"pos": t_data.pos, "reason": "Color Mismatch"})
 					continue
 					
@@ -948,6 +965,7 @@ func _evaluate_docking(source_tet: Tetromino) -> Dictionary:
 		result.target_cells = final_target_cells
 		result.source_blocks = source_blocks
 		result.target_data = t_data
+		result.source_match_block = s_block  # この同色隣接ペアが結合のきっかけ
 		result.reason = "OK"
 		return result
 
@@ -1002,7 +1020,7 @@ func _merged_placement_ok(target_tet: Node, base_block: Node, base_cell: Vector2
 	return true
 
 
-func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_blocks: Array, target_cells: Array, target_data: Dictionary, frame_origin: Vector2) -> bool:
+func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_blocks: Array, target_cells: Array, target_data: Dictionary, frame_origin: Vector2, match_block: Node = null) -> bool:
 	# [SlowTrace] ドッキング実行。連鎖演出中(slow=true)に発火していれば、解放されるブロックが
 	# 消去Tweenの対象と被ってハングする可能性がある。時刻と状態を記録して相関を取る。
 	print("[SlowTrace] _execute_docking 実行 src_blocks=", source_blocks.size(), " slow=", _is_slow_motion, " chain_active=", _is_chain_active, " t=", Time.get_ticks_msec())
@@ -1018,6 +1036,18 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 	var anim_duration: float = 0.15
 	if settings != null and settings.get("docking_anim_duration") != null:
 		anim_duration = maxf(0.0, settings.docking_anim_duration)
+
+	# 磁力ライン演出のリードイン（線が走ってから引っ張られ始めるまでの溜め）。アニメ無し設定なら0。
+	var lead_in: float = 0.09 if anim_duration > 0.01 else 0.0
+	# 磁力ライン：判定のきっかけになった「同色で隣接したペア」だけを1本で繋ぐ。
+	# 表示位置は“ドッキング後”の最終グリッド位置にする（移動でズレないよう、下のスナップ計算と
+	# 同じ式で端点を解析的に求める）。きっかけのソース側ブロックの添字を控えておく。
+	var dock_segments: Array = []
+	var match_idx: int = source_blocks.find(match_block)
+	if match_idx < 0:
+		match_idx = 0  # フォールバック：先頭ブロックで代用
+	var link_from := Vector2.ZERO
+	var link_from_valid := false
 
 	# --- グリッド吸着（重なり防止 / 原因Bの根治）---
 	# 結合先(target_tet)を最寄りの90度＋絶対グリッドの目標姿勢へ寄せる。
@@ -1046,8 +1076,8 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 
 	# 結合先の姿勢をグリッドへ補間（既存ブロックも一緒にカチッと整列する）
 	if target_pose_valid:
-		tween.tween_property(target_tet, "global_position", target_pos_final, anim_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		tween.tween_property(target_tet, "rotation", target_rot_final, anim_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tween.tween_property(target_tet, "global_position", target_pos_final, anim_duration).set_delay(lead_in).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tween.tween_property(target_tet, "rotation", target_rot_final, anim_duration).set_delay(lead_in).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 	for i in range(source_blocks.size()):
 		var block = source_blocks[i]
@@ -1057,41 +1087,85 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 		# 結合先が90度回転スナップされても最終グローバル座標が検証済みセルに一致するよう、
 		# 絶対セルのワールド座標を、結合先の最終姿勢のローカル座標へ逆変換する。
 		var exact_local_pos: Vector2
+		var block_final_global: Vector2  # ドッキング後（スナップ後）のこのブロックの最終global座標
 		if target_pose_valid and is_instance_valid(pf_node):
 			var cell_global: Vector2 = pf_node.to_global(Vector2(target_cell.x * CELL_SIZE, target_cell.y * CELL_SIZE))
 			exact_local_pos = (cell_global - target_pos_final).rotated(-target_rot_final)
+			block_final_global = cell_global
 		else:
 			# フォールバック（姿勢算出不可時）：従来どおり結合先ローカルでの差分配置
 			var cell_diff = target_cell - base_cell
 			exact_local_pos = base_block.position + Vector2(cell_diff.x * CELL_SIZE, cell_diff.y * CELL_SIZE)
-		
+			block_final_global = base_block.global_position + Vector2(cell_diff.x * CELL_SIZE, cell_diff.y * CELL_SIZE)
+
+		# 磁力ラインの始点：きっかけのブロックの“ドッキング後”位置を採用（移動後に隣り合う場所）
+		if i == match_idx:
+			link_from = block_final_global
+			link_from_valid = true
+
 		# 移籍による位置ズレを防ぐため、現在の見た目の絶対座標・角度を保存
 		var current_global_pos = block.global_position
 		var current_global_rot = block.global_rotation
-		
+
 		# ターゲットに移籍
 		block.get_parent().remove_child(block)
 		target_tet.add_child(block)
-		
+
 		# 一旦元のグローバル座標・角度を復元（見た目を維持）
 		block.global_position = current_global_pos
 		block.global_rotation = current_global_rot
-		
-		# 目標のローカル座標・角度(0.0)へアニメーション
-		tween.tween_property(block, "position", exact_local_pos, anim_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		tween.tween_property(block, "rotation", 0.0, anim_duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+		# 目標のローカル座標・角度(0.0)へアニメーション（lead_in 分遅らせ、磁力ラインが走ってから引っ張る）
+		tween.tween_property(block, "position", exact_local_pos, anim_duration).set_delay(lead_in).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tween.tween_property(block, "rotation", 0.0, anim_duration).set_delay(lead_in).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+	# 磁力ラインの終点：結合先ブロックの“ドッキング後”位置（base_cell のグリッド中心）。
+	# 始点(link_from)・終点とも最終位置なので、ブロックが移動し終わって本当に隣り合う場所に線が残る。
+	if link_from_valid:
+		var link_to: Vector2 = base_block.global_position
+		if target_pose_valid and is_instance_valid(pf_node):
+			link_to = pf_node.to_global(Vector2(base_cell.x * CELL_SIZE, base_cell.y * CELL_SIZE))
+		dock_segments.append({"from": link_from, "to": link_to})
+
+	# 磁力ライン演出を再生（線が走る → 引っ張られる → ドッキング後の接合位置でジューシーに消滅）。
+	if is_instance_valid(effect_manager) and effect_manager.has_method("play_magnetic_dock"):
+		effect_manager.play_magnetic_dock(dock_segments, lead_in, anim_duration)
 
 	# クラッシュ対策：アニメーション中にオブジェクトが破棄される可能性を考慮し、事前にエフェクト再生用の座標をキャッシュしておく
 	var snap_effect_pos = source_blocks[0].global_position if not source_blocks.is_empty() else Vector2.ZERO
+
+	# 円形の衝撃波は「ドッキングの線の中央点（接合点）」に出す。
+	# 線分の始点(link_from)・終点(link_to)の中点＝MagneticLink が線を吸い込んで消す接合位置と一致する。
+	# 線が無い（リンク不成立）ケースはパチッと同じ位置にフォールバック。
+	var shockwave_pos: Vector2 = snap_effect_pos
+	if not dock_segments.is_empty():
+		var seg: Dictionary = dock_segments[0]
+		shockwave_pos = (seg["from"] as Vector2).lerp(seg["to"] as Vector2, 0.5)
+
+	# 「パチッ」エフェクトの発火タイミングを、ブロックが着地する瞬間(lead_in + anim_duration)を
+	# 基準にオフセットで前後させる。0なら着地と同時、マイナスで着地前、プラスで着地後。
+	# アニメ完了コールバックから切り離し、独立した専用Tweenでスケジュールする（位置はキャッシュ済みで安全）。
+	var snap_effect_offset: float = 0.0
+	if settings != null and settings.get("snap_effect_offset") != null:
+		snap_effect_offset = settings.snap_effect_offset
+	var snap_at: float = maxf(0.0, lead_in + anim_duration + snap_effect_offset)
+	var snap_tween = create_tween().bind_node(target_tet)
+	snap_tween.tween_interval(snap_at)
+	snap_tween.tween_callback(func():
+		if snap_effect_pos == Vector2.ZERO or not is_instance_valid(effect_manager):
+			return
+		# パチッ（粒子）と円形の衝撃波（リング）を同じ瞬間に一緒に弾けさせる。
+		# 衝撃波はドッキング線の中央点（接合点）に出す。
+		if effect_manager.has_method("play_snap_particles"):
+			effect_manager.play_snap_particles(snap_effect_pos)
+		if effect_manager.has_method("play_dock_shockwave"):
+			effect_manager.play_dock_shockwave(shockwave_pos)
+	)
 
 	# アニメーション完了後の処理を遅延実行
 	tween.chain().tween_callback(func():
 		if is_instance_valid(target_tet) and target_tet.has_method("_rebuild_internal_arrays"):
 			target_tet._rebuild_internal_arrays()
-
-		# キャッシュした安全な座標を用いてエフェクトを再生
-		if is_instance_valid(effect_manager) and effect_manager.has_method("play_snap_particles") and snap_effect_pos != Vector2.ZERO:
-			effect_manager.play_snap_particles(snap_effect_pos)
 
 		# ドッキング成立をSE用に通知
 		block_docked.emit()
@@ -1117,10 +1191,13 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 var _preview_rects: Array[Rect2] = []
 var _preview_fill_color: Color = Color(1.0, 1.0, 1.0, 0.3)
 var _preview_line_color: Color = Color(1.0, 1.0, 1.0, 0.8)
+# デバッグ吸着円を最前面に描くための専用オーバーレイ（枠・ブロックより手前に出す）。_ready で生成。
+var _debug_overlay: Node2D = null
 
 func update_docking_preview(source_tet: Tetromino) -> void:
+	# ドラッグ中のリアルタイムプレビュー。実際の結合(request_docking)と同じ緩め距離で判定する。
 	_preview_rects.clear()
-	var eval = _evaluate_docking(source_tet)
+	var eval = _evaluate_docking(source_tet, true)
 	_debug_info = eval
 	
 	if eval.can_dock:
@@ -1146,25 +1223,35 @@ func _draw() -> void:
 		draw_rect(rect, _preview_fill_color, true)
 		draw_rect(rect, _preview_line_color, false, 2.0)
 
-	# デバッグ可視化（フラグON時のみ）
-	if show_debug_docking:
-		var physics_frame = get_node_or_null("BoardPhysicsFrame")
-		if physics_frame:
-			for child in get_children():
-				if child is Tetromino and child.get("_is_locked"):
-					for block in child.get_children():
-						if block is CollisionShape2D and not block.disabled:
-							var local_pos = to_local(block.global_position)
-							# 吸着エリアを示す赤い円を描画
-							draw_arc(local_pos, docking_distance_threshold, 0, TAU, 32, Color(1, 0, 0, 0.5), 1.0)
-							
-		# 拒否された理由をテキスト表示
-		if not _debug_info.is_empty() and not _debug_info.get("can_dock", true):
-			var font = ThemeDB.fallback_font
-			var points = _debug_info.get("debug_points", [])
-			for pt in points:
-				var local_pos = to_local(pt.pos)
-				draw_string(font, local_pos + Vector2(0, -20), pt.reason, HORIZONTAL_ALIGNMENT_CENTER, -1, 14, Color.RED)
+
+# デバッグ吸着円・拒否理由を最前面オーバーレイ(_debug_overlay)へ描画する（draw シグナルから呼ばれる）。
+# 描画コマンドは「描画中のCanvasItem」に対して発行する必要があるため、self ではなく
+# _debug_overlay の draw_* / to_local を用いる（オーバーレイは Board と同一変換なので座標は一致）。
+func _on_debug_overlay_draw() -> void:
+	if settings == null or not settings.show_debug_docking or not is_instance_valid(_debug_overlay):
+		return
+
+	# 赤い円＝通常時（自動結合）の判定距離、橙の円＝プレイヤーがつかんでいる時の判定距離。
+	var auto_threshold: float = settings.docking_distance_threshold
+	var drag_threshold: float = settings.drag_docking_distance_threshold
+	var physics_frame = get_node_or_null("BoardPhysicsFrame")
+	if physics_frame:
+		for child in get_children():
+			if child is Tetromino and child.get("_is_locked"):
+				for block in child.get_children():
+					if block is CollisionShape2D and not block.disabled:
+						var local_pos = _debug_overlay.to_local(block.global_position)
+						# 吸着エリアを示す円を描画（赤＝通常 / 橙＝ドラッグ中）
+						_debug_overlay.draw_arc(local_pos, auto_threshold, 0, TAU, 32, Color(1, 0, 0, 0.5), 1.0)
+						_debug_overlay.draw_arc(local_pos, drag_threshold, 0, TAU, 32, Color(1, 0.6, 0, 0.5), 1.0)
+
+	# 拒否された理由をテキスト表示
+	if not _debug_info.is_empty() and not _debug_info.get("can_dock", true):
+		var font = ThemeDB.fallback_font
+		var points = _debug_info.get("debug_points", [])
+		for pt in points:
+			var local_pos = _debug_overlay.to_local(pt.pos)
+			_debug_overlay.draw_string(font, local_pos + Vector2(0, -20), pt.reason, HORIZONTAL_ALIGNMENT_CENTER, -1, 14, Color.RED)
 
 
 # 盤面上の非操作ブロック同士を監視し、条件を満たせば自動結合を発火させる（ステップ2）
@@ -1175,8 +1262,8 @@ func _scan_for_auto_docking() -> void:
 			if child.get("_is_dragging_by_player") or child.get("_is_docking_animating") or child.get("_is_chain_locked"):
 				continue
 				
-			# 既存の優秀な吸着判定ロジックを流用して周囲を評価
-			var eval = _evaluate_docking(child)
+			# 既存の優秀な吸着判定ロジックを流用して周囲を評価（自動結合なので厳しめの距離）
+			var eval = _evaluate_docking(child, false)
 			if eval.can_dock and is_instance_valid(eval.target_tet):
 				var target_tet = eval.target_tet
 				
@@ -1194,7 +1281,7 @@ func _scan_for_auto_docking() -> void:
 					# 結合処理を実行
 					var physics_frame = get_node_or_null("BoardPhysicsFrame")
 					var frame_origin = physics_frame.global_position if physics_frame else Vector2.ZERO
-					_execute_docking(child, target_tet, eval.source_blocks, eval.target_cells, eval.target_data, frame_origin)
+					_execute_docking(child, target_tet, eval.source_blocks, eval.target_cells, eval.target_data, frame_origin, eval.source_match_block)
 					return # 1フレーム中の安全のため、1組結合したらスキャンを抜ける
 
 
@@ -1378,10 +1465,16 @@ func check_deadline_exceeded(y_threshold: float) -> bool:
 			if is_dragging or is_animating:
 				continue
 
-			# 速度がほぼゼロ（物理的に静止している）ブロックのみを判定対象とする
+			# 「積まれている」とみなせる速度のブロックを判定対象とする。
+			# 物理ベースで常時微振動するため完全静止(=ほぼ0)を条件にすると、揺れた瞬間に
+			# 判定対象から外れて危険タイマーがチラついてしまう。しきい値はGameSettingsで調整可能にし、
+			# 微振動を許容できる程度に緩く設定する（角速度はその比率で連動させる）。
+			var v_threshold: float = 120.0
+			if settings != null and settings.get("game_over_velocity_threshold") != null:
+				v_threshold = settings.get("game_over_velocity_threshold")
 			var v_len = child.linear_velocity.length()
 			var a_len = abs(child.angular_velocity)
-			if v_len < 10.0 and a_len < 2.0:
+			if v_len < v_threshold and a_len < (v_threshold * 0.1):
 				for block in child.get_children():
 					if block is CollisionShape2D and not block.disabled:
 						# Godotでは画面上部に行くほどY座標が小さくなる

@@ -160,9 +160,17 @@ func _process(delta: float) -> void:
 						warning_rect.color = Color(1.0, 0.0, 0.0, 0.6)
 					game_over()
 			else:
-				game_over_timer = 0.0
+				# ラインより下に戻った場合は即ゼロリセットせず、徐々に減衰させる。
+				# 理由: 物理ブロックの一瞬の振動でタイマーが消えると警告(赤)がチラつき、
+				# 「いつ死ぬのか読めない」不公平・ストレスにつながるため。減衰式にすることで
+				# 越えている間はジワジワ濃くなり、下げればスーッと引く危険ゲージとして機能する。
+				var recovery_rate = 1.5
+				if is_instance_valid(game_settings) and game_settings.get("game_over_recovery_rate") != null:
+					recovery_rate = game_settings.get("game_over_recovery_rate")
+				game_over_timer = max(0.0, game_over_timer - delta * recovery_rate)
 				if is_instance_valid(warning_rect):
-					warning_rect.color = Color(1.0, 0.0, 0.0, 0.0)
+					var warning_alpha = clamp(game_over_timer / grace, 0.0, 1.0) * 0.4
+					warning_rect.color = Color(1.0, 0.0, 0.0, warning_alpha)
 
 	# --- スポーンタイマー処理 ---
 	if is_instance_valid(board) and board.has_method("is_chain_active") and board.is_chain_active():
