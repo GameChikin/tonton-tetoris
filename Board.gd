@@ -37,6 +37,24 @@ var _is_slow_motion: bool = false
 # ウォッチドッグ用：連鎖処理が最後に「進捗」した時刻(ms)。長い連鎖を誤って打ち切らないよう、
 # 総経過ではなく「進捗が一定時間止まったか」でハングを判定するために使う。
 var _chain_progress_msec: int = 0
+# 連鎖コルーチンの世代ID。ウォッチドッグ強制復旧後に「古い連鎖コルーチン」がawaitから再開して
+# 新しい連鎖の状態（_is_chain_active / _pending_clear）を壊す二重実行を防ぐ。
+# 復旧・新規開始のたびにインクリメントし、await明けにIDが進んでいたら静かに自滅させる。
+var _chain_run_id: int = 0
+
+# --- 原因調査用デバッグ（show_debug_matching）---
+# マッチ判定の可視化データ（オーバーレイ描画用）。毎物理フレーム _evaluate_puyo_matches が更新する。
+var _debug_match_info: Dictionary = {}
+# 「マッチ成立中なのに発火しない」状態の継続時間計測（group_key -> {"t": 経過秒, "logged": 出力済みか}）
+var _match_stall: Dictionary = {}
+# 結合デッドゾーンログ／連鎖キュー滞留警告のレート制限用タイムスタンプ(ms)
+var _last_dockfail_log_msec: int = 0
+var _last_leak_log_msec: int = 0
+
+
+# 調査用フラグの安全な読み出し（キー欠損に強い既存パターンに倣う）
+func _is_match_debug_on() -> bool:
+	return settings != null and settings.get("show_debug_matching") == true
 
 
 # 外部（Mainなど）から現在連鎖中かどうかを取得する
@@ -341,9 +359,17 @@ func _physics_process(delta: float) -> void:
 	
 	# 連鎖中も判定を回し続けるため、_is_resolving によるブロックを撤廃
 
-	# デバッグ吸着円を最前面オーバーレイで毎フレーム更新（移動中のブロックにも追従させる）。フラグON時のみ。
-	if settings != null and settings.show_debug_docking and is_instance_valid(_debug_overlay):
+	# デバッグ表示（吸着円・マッチ判定）を最前面オーバーレイで毎フレーム更新。フラグON時のみ。
+	if settings != null and (settings.show_debug_docking or _is_match_debug_on()) and is_instance_valid(_debug_overlay):
 		_debug_overlay.queue_redraw()
+
+	# 滞留検知（常時ON）：連鎖が動いていないのに消去待ち(_pending_clear)やキューが残っているのは、
+	# 「白く光ったまま判定から除外され続ける（凍結）」バグの直接証拠なので、見つけ次第警告を出す。
+	if not _is_chain_active and (not _pending_clear.is_empty() or not _chain_queue.is_empty()):
+		var now_msec: int = Time.get_ticks_msec()
+		if now_msec - _last_leak_log_msec >= 1000:
+			_last_leak_log_msec = now_msec
+			push_warning("[Debug ChainLeak] 連鎖停止中に残留検知: pending=%d queue=%d（白凍結の原因候補）" % [_pending_clear.size(), _chain_queue.size()])
 
 	if settings.current_rule == 0: # Tetris
 		_evaluate_tetris_lines(delta)
@@ -422,13 +448,25 @@ func _evaluate_puyo_matches(delta: float) -> void:
 	var physics_frame = get_node_or_null("BoardPhysicsFrame")
 	if not physics_frame:
 		return
-		
-	var min_clear_count: int = 4
 
-	# 1. 盤面内の全ブロックを「色 → セル(Vector2i) → そのセルに居るブロック配列」へ集約する。
-	#    セル単位で扱うことで、物理的に重なった/極端に接近したブロックが同一セルに畳まれ、
-	#    連結数を水増しして「見た目4つ未満なのに連鎖」が起きるのを防ぐ（重なりは1セル＝1カウント）。
-	var color_cells: Dictionary = {}  # color_id -> { Vector2i: Array[block] }
+	# 消去に必要な隣接ブロック数はGameSettingsで調整可能（キー欠損時は従来値4へフォールバック）
+	var min_clear_count: int = settings.get("clear_threshold") if settings != null and settings.get("clear_threshold") != null else 4
+
+	# 調査用（show_debug_matching）：このフレームの判定内容を可視化・ログするための収集器
+	var debug_on: bool = _is_match_debug_on()
+	var dbg_blocks: Array = []
+	var dbg_components: Array = []
+	var dbg_folds: Array = []
+	var dbg_edges: Array = []
+
+	# 連結判定の距離パラメータ（GameSettingsから。キー欠損時はフォールバック）
+	# connect_dist: この実距離以内の同色ペアを「隣接」とみなす（隣接静止=32px / 斜め接触=約45px の中間）
+	# overlap_dist: この実距離以内に重なった同色ブロックは「1個」に統合して数える（水増し防止）
+	var connect_dist: float = settings.get("match_connect_distance") if settings != null and settings.get("match_connect_distance") != null else 36.0
+	var overlap_dist: float = settings.get("match_overlap_merge_distance") if settings != null and settings.get("match_overlap_merge_distance") != null else 16.0
+
+	# 1. 盤面内の全ブロックを「色 → ブロック配列」へ集約する（除外条件は従来どおり）。
+	var color_blocks: Dictionary = {}  # color_id -> Array[block]
 	var active_blocks: Array[Node] = []  # 後段のグロー解除用に、判定対象の全ブロックを保持
 	for child in get_children():
 		if child is Tetromino:
@@ -437,6 +475,9 @@ func _evaluate_puyo_matches(delta: float) -> void:
 					continue
 				# 連鎖キューへ投入済み（消去待ち）のブロックは判定対象外（二重投入・誤再充電を防ぐ）
 				if _pending_clear.has(block):
+					# 調査用：除外中＝modulateが更新されず白いまま凍結しうるブロックを可視化対象に記録する
+					if debug_on:
+						dbg_blocks.append({"pos": block.global_position, "charge": _block_charge.get(block, 0.0), "matched": false, "pending": true})
 					continue
 				if not block.has_meta("color_id"):
 					continue
@@ -445,43 +486,82 @@ func _evaluate_puyo_matches(delta: float) -> void:
 				if local_pos.x < -4.0 or local_pos.x > settings.board_width_px + 4.0:
 					continue
 				active_blocks.append(block)
-				var cell := _cell_of(block, physics_frame)
 				var color_id = block.get_meta("color_id")
-				if not color_cells.has(color_id):
-					color_cells[color_id] = {}
-				var cells: Dictionary = color_cells[color_id]
-				if not cells.has(cell):
-					cells[cell] = []
-				cells[cell].append(block)
+				if not color_blocks.has(color_id):
+					color_blocks[color_id] = []
+				color_blocks[color_id].append(block)
 
-	# 2. 同色セルの4近傍フラッドフィルで連結成分を求め、ユニークなセル数で消去判定する。
+	# 2. 同色ブロックを「実距離」で連結判定する（格子への丸めを廃止）。
+	#    格子丸めでは、傾き・ズレたまま積まれたブロックが「同一マスへ畳み込まれる/2マス飛びになる」ことで
+	#    見た目どおりに数えられないバグがあった。塊内の隣接ブロック間は傾いていても常に約32pxなので、
+	#    実距離で判定すればプレイヤーの見た目と判定が一致する。
+	#    (a) overlap_dist 以内に重なったブロックは1つの「スタック」へ統合（連結数の水増し防止＝旧セル畳み込みの距離版）
+	#    (b) スタック同士は、所属ブロックの最近接ペアが connect_dist 以内なら「隣接」とみなす
+	#    (c) 連結成分のスタック数（＝見た目の個数）が閾値以上なら、その全ブロックを消去対象とする
 	var matched_groups: Array[Array] = []
-	var adjacent_offsets := [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]
-	for color_id in color_cells.keys():
-		var cells: Dictionary = color_cells[color_id]
-		var visited_cells: Dictionary = {}
-		for start_cell in cells.keys():
-			if visited_cells.has(start_cell):
+	for color_id in color_blocks.keys():
+		var blocks_of_color: Array = color_blocks[color_id]
+
+		# (a) スタック化（既存スタックの代表位置から overlap_dist 以内なら同一スタックへ統合）
+		var stacks: Array[Dictionary] = []
+		for b in blocks_of_color:
+			var placed: bool = false
+			for st in stacks:
+				if (st["pos"] as Vector2).distance_to(b.global_position) <= overlap_dist:
+					(st["blocks"] as Array).append(b)
+					placed = true
+					break
+			if not placed:
+				stacks.append({"blocks": [b], "pos": b.global_position})
+
+		# (b) スタック間の隣接グラフを構築
+		var stack_count: int = stacks.size()
+		var adjacency: Array = []
+		for i in range(stack_count):
+			adjacency.append([])
+		for i in range(stack_count):
+			for j in range(i + 1, stack_count):
+				if _are_stacks_connected(stacks[i], stacks[j], connect_dist):
+					adjacency[i].append(j)
+					adjacency[j].append(i)
+					if debug_on:
+						dbg_edges.append({"a": stacks[i]["pos"], "b": stacks[j]["pos"]})
+
+		# (c) フラッドフィルで連結成分を求め、スタック数（見た目の個数）で消去判定する
+		var visited: Dictionary = {}
+		for start_idx in range(stack_count):
+			if visited.has(start_idx):
 				continue
-			var component: Array[Vector2i] = []
-			var stack: Array[Vector2i] = [start_cell]
-			while not stack.is_empty():
-				var c: Vector2i = stack.pop_back()
-				if visited_cells.has(c):
+			var component: Array[int] = []
+			var dfs_stack: Array[int] = [start_idx]
+			while not dfs_stack.is_empty():
+				var idx: int = dfs_stack.pop_back()
+				if visited.has(idx):
 					continue
-				visited_cells[c] = true
-				component.append(c)
-				for off in adjacent_offsets:
-					var n: Vector2i = c + off
-					if cells.has(n) and not visited_cells.has(n):
-						stack.append(n)
-			# ユニークセル数が閾値以上なら、そのセル群に属する全ブロックを消去対象にする
+				visited[idx] = true
+				component.append(idx)
+				for nb in adjacency[idx]:
+					if not visited.has(nb):
+						dfs_stack.append(nb)
+			# 調査用：連結数を記録（「見た目4つ隣接なのに3」等の確認用）
+			if debug_on and component.size() >= 2:
+				var centroid := Vector2.ZERO
+				for idx in component:
+					centroid += stacks[idx]["pos"] as Vector2
+				dbg_components.append({"size": component.size(), "center": centroid / float(component.size())})
+			# スタック数が閾値以上なら、そのスタック群に属する全ブロックを消去対象にする
 			if component.size() >= min_clear_count:
 				var group: Array[Node] = []
-				for cc in component:
-					for b in cells[cc]:
+				for idx in component:
+					for b in stacks[idx]["blocks"]:
 						group.append(b)
 				matched_groups.append(group)
+
+		# 調査用：重なり統合（複数ブロックが1個として数えられている場所）の検出
+		if debug_on:
+			for st in stacks:
+				if (st["blocks"] as Array).size() >= 2:
+					dbg_folds.append({"pos": st["pos"], "count": (st["blocks"] as Array).size()})
 			
 	# --- 破壊待機の充電（ブロック単位）---
 	# キー（グループ集合）ではなくブロック単位で充電を持つことで、塊のメンバーが少し
@@ -520,6 +600,7 @@ func _evaluate_puyo_matches(delta: float) -> void:
 	# トリガー：現在マッチ中かつ構成ブロックが全て満充電(>=hold)の塊を連鎖キューへ投入する。
 	# 満充電なら確実に発火するため「白いのに連鎖に加わらない」を防ぐ。
 	var triggered: bool = false
+	var stalled_groups: Array[Array] = []
 	for group in matched_groups:
 		if group.is_empty():
 			continue
@@ -533,16 +614,49 @@ func _evaluate_puyo_matches(delta: float) -> void:
 				_pending_clear[b] = true
 			_chain_queue.append(group)
 			triggered = true
+			if debug_on:
+				print("[Debug MatchFire] 発火: %d個のグループを連鎖キューへ投入 (chain_active=%s queue=%d)" % [group.size(), str(_is_chain_active), _chain_queue.size()])
+		elif debug_on:
+			# 調査用：マッチは成立しているが「全員満充電」に達せず発火していないグループ
+			stalled_groups.append(group)
 
 	if triggered and not _chain_queue.is_empty() and not _is_chain_active:
 		_execute_chain_queue(1)
 
+	# --- 調査用：可視化データの確定と「発火しないマッチ」の継続監視 ---
+	if debug_on:
+		for b in active_blocks:
+			if is_instance_valid(b):
+				dbg_blocks.append({"pos": b.global_position, "charge": _block_charge.get(b, 0.0), "matched": matched_blocks.has(b), "pending": false})
+		_debug_match_info = {"blocks": dbg_blocks, "components": dbg_components, "folds": dbg_folds, "edges": dbg_edges}
+		_update_match_stall_log(stalled_groups, delta, hold)
+	elif not _debug_match_info.is_empty():
+		_debug_match_info.clear()
+
+
+# 2つのスタック（重なり統合済みの同色ブロック群）が「隣接」しているか＝
+# 所属ブロックの最近接ペアが connect_dist 以内かどうかを返す（実距離ベースの連結判定で使用）。
+func _are_stacks_connected(stack_a: Dictionary, stack_b: Dictionary, connect_dist: float) -> bool:
+	for ba in stack_a["blocks"]:
+		if not is_instance_valid(ba):
+			continue
+		for bb in stack_b["blocks"]:
+			if not is_instance_valid(bb):
+				continue
+			if (ba as Node2D).global_position.distance_to((bb as Node2D).global_position) <= connect_dist:
+				return true
+	return false
+
 func _execute_chain_queue(rule: int) -> void:
-	# [SlowTrace] 連鎖開始。ハング検出用にウォッチドッグを起動（awaitしない＝バックグラウンド監視）
+	# 連鎖開始。ハング検出用にウォッチドッグを起動（awaitしない＝バックグラウンド監視）
 	var _chain_start_msec: int = Time.get_ticks_msec()
 	_chain_progress_msec = _chain_start_msec # 進捗時刻を初期化
-	print("[SlowTrace] _execute_chain_queue 開始 rule=", rule, " t=", _chain_start_msec, " queue=", _chain_queue.size(), " slow=", _is_slow_motion)
 	_chain_watchdog(_chain_start_msec)
+
+	# 世代IDを進めて自分の世代を記憶する。await明けに世代が変わっていたら
+	# （ウォッチドッグ復旧や別経路の連鎖開始があったら）この実行は破棄されたものとして即終了する。
+	_chain_run_id += 1
+	var my_run_id: int = _chain_run_id
 
 	_is_chain_active = true
 	resolve_started.emit()
@@ -579,14 +693,14 @@ func _execute_chain_queue(rule: int) -> void:
 			_apply_shockwave(valid_group)
 			
 		# 消去エフェクトとノード破棄の実行（現在のグループの破壊を同期待機）
-		print("[SlowTrace] _do_line_clear 待機開始 chain=", _current_chain_count, " blocks=", valid_group.size(), " t=", Time.get_ticks_msec())
 		await _do_line_clear(valid_group)
+		# 二重実行ガード：待機中に世代交代（ウォッチドッグ復旧等）が起きていたら、状態に一切触れず終了する
+		if my_run_id != _chain_run_id:
+			return
 		_chain_progress_msec = Time.get_ticks_msec() # 1段消化＝進捗あり。ウォッチドッグの誤発火を防ぐ
-		print("[SlowTrace] _do_line_clear 待機完了 chain=", _current_chain_count, " t=", _chain_progress_msec, " slow=", _is_slow_motion)
 
 		# 次の連鎖がキューに積まれている場合は、スローモーションを維持して予兆演出・インターバル待機へ
 		if not _chain_queue.is_empty():
-			print("[SlowTrace] 次連鎖あり→スロー維持 set_board_slow_motion(true) t=", Time.get_ticks_msec())
 			set_board_slow_motion(true) # エフェクト終了によるスロー解除に対抗して泥沼状態を維持
 			
 			# 1. 次に消去予定のグループを先読みして生存しているブロックを抽出
@@ -616,6 +730,10 @@ func _execute_chain_queue(rule: int) -> void:
 			else:
 				# 予兆対象がない場合の安全フォールバック待機
 				await get_tree().create_timer(interval, true, false, true).timeout
+
+			# 二重実行ガード：インターバル待機中に世代交代が起きていたら終了（状態は新世代が管理する）
+			if my_run_id != _chain_run_id:
+				return
 			
 	# キューが空になったら連鎖を完全に終了し、カウントをリセットする
 	_is_chain_active = false
@@ -627,8 +745,6 @@ func _execute_chain_queue(rule: int) -> void:
 
 	# フェイルセーフ：途中でブロックが消失して消去エフェクトがスキップされた場合でも、
 	# 連鎖の完全終了時には確実にスローモーションを解除してバグを防ぐ
-	print("[SlowTrace] 連鎖ループ脱出→解除へ到達 set_board_slow_motion(false) t=", Time.get_ticks_msec())
-	print("[Debug Chain] 連鎖完了: スローモーションを強制解除します。")
 	set_board_slow_motion(false)
 
 	resolve_finished.emit()
@@ -647,7 +763,10 @@ func _chain_watchdog(_start_msec: int) -> void:
 			return
 		var stalled: int = Time.get_ticks_msec() - _chain_progress_msec
 		if stalled >= stall_limit_msec:
-			push_error("[SlowTrace] 連鎖の進捗が%d ms停止＝ハング検出。強制復旧します。slow=%s queue=%d chain=%d" % [stalled, str(_is_slow_motion), _chain_queue.size(), _current_chain_count])
+			push_error("[SlowTrace] 連鎖の進捗が%d ms停止＝ハング検出。強制復旧します。slow=%s queue=%d chain=%d pending=%d" % [stalled, str(_is_slow_motion), _chain_queue.size(), _current_chain_count, _pending_clear.size()])
+			# 世代IDを進め、ハングしている古い連鎖コルーチンがawaitから再開しても
+			# 状態へ触れず自滅するようにする（強制復旧後の二重実行・状態破壊を防ぐ）
+			_chain_run_id += 1
 			# 強制復旧：スローを解除し、連鎖状態をリセットして次のブロック生成を再開させる
 			set_board_slow_motion(false)
 			_is_chain_active = false
@@ -692,6 +811,51 @@ func _after_chain_cleanup() -> void:
 			invalid.append(k)
 	for k in invalid:
 		_block_charge.erase(k)
+
+
+# 調査用：「マッチ成立中なのに全員満充電に達せず発火しない」状態が hold×2 秒以上続いたら、
+# 足を引っ張っているブロック（充電不足メンバー）を特定してログへ出す。
+# ※グループのメンバーが入れ替わるとキーが変わって計測がリセットされる。それ自体も
+#   「メンバーが安定していない＝セル割当が揺れている」証拠になるため、リセット回数も気にして見る。
+func _update_match_stall_log(stalled_groups: Array[Array], delta: float, hold: float) -> void:
+	var present: Dictionary = {}
+	for group in stalled_groups:
+		var key: String = _get_group_key(group)
+		present[key] = true
+		var entry: Dictionary = _match_stall.get(key, {"t": 0.0, "logged": false})
+		entry["t"] = float(entry["t"]) + delta
+		if float(entry["t"]) >= hold * 2.0 and not bool(entry["logged"]):
+			entry["logged"] = true
+			var lines: Array[String] = []
+			for b in group:
+				if is_instance_valid(b):
+					var mark: String = " ←満充電未達" if _block_charge.get(b, 0.0) < hold else ""
+					lines.append("  color=%s charge=%.2f/%.2f pos=%s%s" % [str(b.get_meta("color_id")), _block_charge.get(b, 0.0), hold, str(b.global_position.round()), mark])
+			print("[Debug MatchStall] マッチ成立中なのに%.1f秒以上発火しないグループ(%d個):\n%s" % [hold * 2.0, group.size(), "\n".join(lines)])
+		_match_stall[key] = entry
+	# 解消した（このフレームに存在しない）グループの計測は破棄する
+	var stale_keys: Array = []
+	for k in _match_stall.keys():
+		if not present.has(k):
+			stale_keys.append(k)
+	for k in stale_keys:
+		_match_stall.erase(k)
+
+
+# 調査用：自動結合が拒否された際、同色ペアが至近距離(40px以内)に居るのに結合できないケースを記録する。
+# 特に「しきい値(30px) < ブロック幅(32px)」のデッドゾーン＝静止した隣接ペアが構造的に結合不能、の実証に使う。
+func _log_dock_deadzone(source_tet: Tetromino, eval: Dictionary) -> void:
+	if not _is_match_debug_on():
+		return
+	var d: float = eval.get("closest_same_color_dist", INF)
+	if d > 40.0:
+		return
+	var now_msec: int = Time.get_ticks_msec()
+	if now_msec - _last_dockfail_log_msec < 1000:
+		return
+	_last_dockfail_log_msec = now_msec
+	var threshold: float = settings.docking_distance_threshold if settings != null else 38.0
+	print("[Debug DockDeadzone] 自動結合不可: 同色最接近=%.1fpx しきい値=%.1fpx reason=%s source=%s" % [d, threshold, str(eval.get("reason")), str(source_tet.name)])
 
 
 func _get_group_key(group: Array) -> String:
@@ -768,9 +932,15 @@ func request_docking(source_tet: Tetromino) -> bool:
 	# プレイヤーがつかんで動かしている塊の結合要求。緩めの距離で判定して気持ちよく吸着させる。
 	var eval = _evaluate_docking(source_tet, true)
 	_debug_info = eval
-	
-	
+
+
 	if eval.can_dock:
+		# 排他ガード：相手が結合アニメーション中・連鎖ロック中（消去予告中）なら結合しない。
+		# 自動スキャン(_scan_for_auto_docking)と同じ不変条件をドラッグ経路にも適用し、
+		# 移動中の塊へ重ねて結合して座標が壊れる「想定外の状態」を防ぐ。
+		var target_tet = eval.target_tet
+		if not is_instance_valid(target_tet) or target_tet.get("_is_docking_animating") or target_tet.get("_is_chain_locked"):
+			return false
 		var physics_frame = get_node_or_null("BoardPhysicsFrame")
 		if physics_frame:
 			# ★ eval.target_data と、きっかけになったソース側マッチブロックを渡す
@@ -788,7 +958,8 @@ func _evaluate_docking(source_tet: Tetromino, is_player_dock: bool = false) -> D
 		"target_data": null,
 		"source_match_block": null,  # 判定のきっかけになった「同色隣接ペア」のソース側ブロック
 		"reason": "",
-		"debug_points": []
+		"debug_points": [],
+		"closest_same_color_dist": INF  # 調査用：同色ペアの最接近距離（デッドゾーン検証）
 	}
 	
 	# デバッグのため判定を分割して詳細なログを出す
@@ -855,7 +1026,11 @@ func _evaluate_docking(source_tet: Tetromino, is_player_dock: bool = false) -> D
 		for t_data in all_active_blocks:
 			var dist = s_pos.distance_to(t_data.pos)
 			if dist < closest_dist_for_debug: closest_dist_for_debug = dist
-			
+			# 調査用：同色ペアの最接近距離を記録（しきい値とブロック幅32pxのデッドゾーン検証）
+			var is_same_color: bool = (not require_same) or s_color_id == "" or t_data.color_id == "" or s_color_id == t_data.color_id
+			if is_same_color and dist < result.closest_same_color_dist:
+				result.closest_same_color_dist = dist
+
 			if dist <= dock_threshold:
 				# 色チェックフラグが有効かつ色が異なる場合は、デバッグ点のみ登録して候補から除外
 				if require_same and s_color_id != "" and t_data.color_id != "" and s_color_id != t_data.color_id:
@@ -1021,10 +1196,6 @@ func _merged_placement_ok(target_tet: Node, base_block: Node, base_cell: Vector2
 
 
 func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_blocks: Array, target_cells: Array, target_data: Dictionary, frame_origin: Vector2, match_block: Node = null) -> bool:
-	# [SlowTrace] ドッキング実行。連鎖演出中(slow=true)に発火していれば、解放されるブロックが
-	# 消去Tweenの対象と被ってハングする可能性がある。時刻と状態を記録して相関を取る。
-	print("[SlowTrace] _execute_docking 実行 src_blocks=", source_blocks.size(), " slow=", _is_slow_motion, " chain_active=", _is_chain_active, " t=", Time.get_ticks_msec())
-
 	# 1. source_tet の物理演算と入力を無効化（アニメーション中の干渉を防止）
 	source_tet.freeze = true
 	source_tet.process_mode = Node.PROCESS_MODE_DISABLED
@@ -1228,7 +1399,14 @@ func _draw() -> void:
 # 描画コマンドは「描画中のCanvasItem」に対して発行する必要があるため、self ではなく
 # _debug_overlay の draw_* / to_local を用いる（オーバーレイは Board と同一変換なので座標は一致）。
 func _on_debug_overlay_draw() -> void:
-	if settings == null or not settings.show_debug_docking or not is_instance_valid(_debug_overlay):
+	if settings == null or not is_instance_valid(_debug_overlay):
+		return
+
+	# 調査用：マッチ判定の可視化（所属マス目・充電率・畳み込み・連結数）
+	if _is_match_debug_on():
+		_draw_match_debug()
+
+	if not settings.show_debug_docking:
 		return
 
 	# 赤い円＝通常時（自動結合）の判定距離、橙の円＝プレイヤーがつかんでいる時の判定距離。
@@ -1254,6 +1432,50 @@ func _on_debug_overlay_draw() -> void:
 			_debug_overlay.draw_string(font, local_pos + Vector2(0, -20), pt.reason, HORIZONTAL_ALIGNMENT_CENTER, -1, 14, Color.RED)
 
 
+# 調査用オーバーレイ：実距離ベースのマッチ判定を可視化する。
+# ・黄色の線＝「隣接」とみなされた同色スタック間の連結エッジ（どこまでが一塊と認識されているか）
+# ・各ブロックの小円＝状態（黄=マッチ中 / 赤=消去待ち凍結 / 青=非マッチ）＋充電率%
+# ・OVLxN＝N個が重なり統合され「1個」として数えられている場所
+# ・数字＝連結成分のサイズ（緑=消去閾値以上 / 橙=閾値未満）
+func _draw_match_debug() -> void:
+	if _debug_match_info.is_empty():
+		return
+	var font: Font = ThemeDB.fallback_font
+	var hold: float = settings.line_clear_hold_time
+
+	# 1. 連結エッジ（実距離で「隣接」と判定された同色ペア）
+	for edge in _debug_match_info.get("edges", []):
+		var pa: Vector2 = _debug_overlay.to_local(edge["a"])
+		var pb: Vector2 = _debug_overlay.to_local(edge["b"])
+		_debug_overlay.draw_line(pa, pb, Color(1.0, 0.9, 0.2, 0.7), 2.0)
+
+	# 2. 各ブロックの状態と充電率（Pプレフィックスは消去待ち＝判定除外で凍結中の意味）
+	for info in _debug_match_info.get("blocks", []):
+		var local_pos: Vector2 = _debug_overlay.to_local(info["pos"])
+		var col := Color(0.3, 0.7, 1.0, 0.8)
+		if bool(info.get("pending", false)):
+			col = Color(1.0, 0.2, 0.2, 1.0)
+		elif bool(info.get("matched", false)):
+			col = Color(1.0, 0.9, 0.2, 1.0)
+		_debug_overlay.draw_arc(local_pos, 5.0, 0, TAU, 16, col, 2.0)
+		var pct: int = int(round(clampf(float(info["charge"]) / hold, 0.0, 1.0) * 100.0))
+		if pct > 0 or bool(info.get("pending", false)):
+			var label: String = ("P" if bool(info.get("pending", false)) else "") + str(pct)
+			_debug_overlay.draw_string(font, local_pos + Vector2(-10, -8), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 1, 1, 0.95))
+
+	# 3. 重なり統合（複数ブロックが「1個」として数えられている場所）
+	for fold in _debug_match_info.get("folds", []):
+		var fpos: Vector2 = _debug_overlay.to_local(fold["pos"])
+		_debug_overlay.draw_string(font, fpos + Vector2(-20, 18), "OVLx%d" % [int(fold["count"])], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1.0, 0.3, 0.3, 1.0))
+
+	# 4. 連結成分のサイズ（緑=消去閾値以上 / 橙=閾値未満）
+	for comp in _debug_match_info.get("components", []):
+		var comp_center: Vector2 = _debug_overlay.to_local(comp["center"])
+		var size_n: int = int(comp["size"])
+		var size_col := Color(0.4, 1.0, 0.4, 1.0) if size_n >= settings.clear_threshold else Color(1.0, 0.7, 0.2, 1.0)
+		_debug_overlay.draw_string(font, comp_center + Vector2(-6, -26), str(size_n), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, size_col)
+
+
 # 盤面上の非操作ブロック同士を監視し、条件を満たせば自動結合を発火させる（ステップ2）
 func _scan_for_auto_docking() -> void:
 	for child in get_children():
@@ -1264,6 +1486,9 @@ func _scan_for_auto_docking() -> void:
 				
 			# 既存の優秀な吸着判定ロジックを流用して周囲を評価（自動結合なので厳しめの距離）
 			var eval = _evaluate_docking(child, false)
+			# 調査用：至近距離の同色ペアが結合できなかったケースを記録（デッドゾーン検証）
+			if not eval.can_dock:
+				_log_dock_deadzone(child, eval)
 			if eval.can_dock and is_instance_valid(eval.target_tet):
 				var target_tet = eval.target_tet
 				
@@ -1377,16 +1602,10 @@ func _separate_overlapping_blocks() -> void:
 
 # 盤面上の全テトリミノの物理スロー状態を一斉に切り替える（ステップ2）
 func set_board_slow_motion(is_slow: bool) -> void:
-	var _tet_count: int = 0
 	for child in get_children():
 		if child is Tetromino and child.has_method("set_slow_motion"):
 			child.set_slow_motion(is_slow)
-			_tet_count += 1
 	_is_slow_motion = is_slow
-	# [SlowTrace] 呼び出し元・対象数・適用後の状態を記録（true/false の最終順序を特定するため）
-	print("[SlowTrace] set_board_slow_motion(", is_slow, ") 対象Tetromino数=", _tet_count, " t=", Time.get_ticks_msec())
-	print("[SlowTrace]   呼び出し元スタック=", get_stack())
-	print("[Debug Board] 盤面がスローモーション要求を受信しました: is_slow = ", is_slow)
 
 
 # 盤面の定数（WIDTH, HEIGHT）に基づいて、背景と物理枠（壁・床）を自動でリサイズ・再構築する

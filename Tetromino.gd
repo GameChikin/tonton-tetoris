@@ -530,6 +530,11 @@ func _rebuild_internal_arrays() -> void:
 	# ガベージコレクション：ブロックをすべて失って空箱になった場合、自身を安全に破棄する
 	if blocks.is_empty() and not is_queued_for_deletion():
 		queue_free()
+		return
+
+	# 構成変化（結合・分裂・消去）を外周線へ即座に反映する。
+	# _process は眠っている間スキップするため、ここで明示的に再描画を要求する。
+	queue_redraw()
 
 
 # ブロックが消去や奪取によって自身から離れる直前に呼ばれる
@@ -584,10 +589,6 @@ func _check_and_split_if_needed() -> void:
 
 # 孤立したブロックグループを新しいテトリミノとして独立させる
 func _detach_group(sub_group: Array) -> void:
-	# [SlowTrace] 分裂発生。連鎖演出中に起きるとブロック移籍で消去Tween対象が解放され得る。
-	var _slow_now: bool = board.get("_is_slow_motion") if is_instance_valid(board) else false
-	print("[SlowTrace] _detach_group 実行 cells=", sub_group.size(), " board_slow=", _slow_now, " t=", Time.get_ticks_msec())
-
 	var tet_scene = load("res://Tetromino.tscn") as PackedScene
 	if not tet_scene: return
 	var new_tet = tet_scene.instantiate() as Tetromino
@@ -619,8 +620,14 @@ func _detach_group(sub_group: Array) -> void:
 		new_tet._rebuild_internal_arrays()
 
 
-# 毎フレーム描画を更新する（ブロックの移動や結合に追従）
+# 毎フレーム描画を更新する（ブロックの移動や結合に追従）。
+# ※外周線はローカル座標で描くため、本来再描画が必要なのは「ブロック構成や
+#   ローカル位置が変わる時」だけ。物理的に眠って静止している塊まで毎フレーム
+#   再描画するとWeb実行で無駄な負荷になるため、眠っている間はスキップする。
+#   （構成が変わる結合・分裂時は _rebuild_internal_arrays が明示的に再描画する）
 func _process(_delta: float) -> void:
+	if sleeping and not _is_docking_animating and not _is_dragging_by_player:
+		return
 	queue_redraw()
 
 

@@ -266,7 +266,7 @@ visible = false
 offset_left = 12.0
 offset_top = 80.0
 offset_right = 252.0
-offset_bottom = 220.0
+offset_bottom = 280.0
 
 [node name="MarginContainer" type="MarginContainer" parent="MenuUI/MenuPanel" unique_id=482910554]
 layout_mode = 2
@@ -289,6 +289,11 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 28
 text = "Retry"
 
+[node name="Button_Mute" type="Button" parent="MenuUI/MenuPanel/MarginContainer/VBoxContainer" unique_id=482910558]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "SOUND: ON"
+
 [node name="DeadlineLine" type="Line2D" parent="." unique_id=223872109]
 
 [node name="WarningRect" type="ColorRect" parent="." unique_id=1059526404]
@@ -300,3 +305,4 @@ offset_bottom = 40.0
 [connection signal="pressed" from="MenuUI/HamburgerButton" to="." method="toggle_menu"]
 [connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_BackToTitle" to="." method="go_to_title"]
 [connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_RetryMenu" to="." method="retry_game"]
+[connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_Mute" to="." method="toggle_mute"]

@@ -10,7 +10,9 @@
 
 - ブロックの塊（`Tetromino`）は `RigidBody2D` であり、Jolt 物理エンジンによる**実際の重力・衝突で落下・堆積する**。
 - 盤面状態は「2次元配列」ではなく、**シーンツリー上に実在するノードの `global_position`** が唯一の真実（source of truth）。
-- ライン消去やぷよ連結の判定は、配列を見るのではなく**毎物理フレーム、実ブロックのワールド座標を `CELL_SIZE`(32px) でマス目に丸めて**集計して行う（`Board._evaluate_tetris_lines` / `_evaluate_puyo_matches`）。
+- ライン消去やぷよ連結の判定は、配列を見るのではなく**毎物理フレーム、実ブロックのワールド座標**で行う。
+  - テトリスのライン判定：座標を `CELL_SIZE`(32px) でマス目に丸めて行単位に集計（`Board._evaluate_tetris_lines`）。
+  - ぷよ連結判定：**実距離ベース**。同色ブロック中心間が `match_connect_distance` 以内なら「隣接」、`match_overlap_merge_distance` 以内に重なったものは「1個」に統合して数える（`Board._evaluate_puyo_matches`）。傾き・ズレたまま積まれても見た目どおりに数えるため、**マス目への丸めは使わない**（丸めはFOLD/2マス飛びの誤判定を生むため廃止した経緯がある。戻さないこと）。
 
 > ⚠️ `Board.gd` には `_initialize_grid()`, `is_cell_empty()`, `lock_blocks()`, `apply_tetris_gravity()` 等、**中身が `pass` / 空配列 / `return true` の旧グリッド方式の名残メソッドが多数残っている**。これらはレガシーであり、**呼び出しても何も起きない**。新規ロジックをここに足さないこと。盤面判定は必ず座標ベースで書く。
 

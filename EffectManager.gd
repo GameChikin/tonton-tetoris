@@ -98,7 +98,6 @@ func play_line_clear_effect(block_node: Node) -> void:
 
 
 func play_line_blink(blocks: Array[Node]) -> void:
-	print("[Debug: EffectManager] play_line_blink 開始。渡されたブロック数: ", blocks.size())
 	if blocks.is_empty():
 		return
 		
@@ -108,11 +107,10 @@ func play_line_blink(blocks: Array[Node]) -> void:
 			var cr = block.get_node_or_null("ColorRect") as ColorRect
 			if is_instance_valid(cr):
 				valid_color_rects.append(cr)
-				
-	print("[Debug: EffectManager] 抽出されたColorRect数: ", valid_color_rects.size())
+
 	if valid_color_rects.is_empty():
 		return
-		
+
 	var tween := create_tween()
 	# ポーズ中（連鎖インターバル中）でも確実にTweenを進行させる明示的な設定
 	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
@@ -130,15 +128,12 @@ func play_line_blink(blocks: Array[Node]) -> void:
 		tween.chain()
 		
 	await tween.finished
-	print("[Debug: EffectManager] play_line_blink Tween終了")
 
 func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 	if blocks.is_empty():
 		return
 
 	# 1. 時間停止（物理演算・ゲーム進行を一時ストップ）
-	print("[SlowTrace] play_line_vanish_and_flash 開始 blocks=", blocks.size(), " t=", Time.get_ticks_msec())
-	print("[Debug Effect] 演出開始: スローモーション ON を要求します")
 	slow_motion_requested.emit(true)
 
 	var valid_color_rects: Array[ColorRect] = []
@@ -149,7 +144,6 @@ func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 				valid_color_rects.append(cr)
 
 	if valid_color_rects.is_empty():
-		print("[Debug Effect] 演出終了: スローモーション OFF を要求します")
 		slow_motion_requested.emit(false)
 		return
 
@@ -176,9 +170,7 @@ func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 	# 点滅対象(cr)が演出中にドッキング等で解放されてもTweenがkillされてハングしないようにする。
 	# blink_tween自体はアルファ変更の見た目を駆動するだけ（_set_blocks_alphaが生存チェック済み）。
 	var blink_total: float = blink_duration * 2.0 * float(blink_count)
-	print("[SlowTrace] blink タイマー待機前 wait=", blink_total, " t=", Time.get_ticks_msec())
 	await get_tree().create_timer(blink_total).timeout
-	print("[SlowTrace] blink タイマー待機後 t=", Time.get_ticks_msec())
 
 	# 4. 消失演出（縮小しながらフェードアウト）
 	# 【修正】有効なColorRectが1つも無ければTweenを作らない（空Tween=「started with no Tweeners」エラーの根絶）。
@@ -197,13 +189,9 @@ func play_line_vanish_and_flash(blocks: Array[Node]) -> void:
 				vanish_tween.tween_property(cr, "modulate:a", 0.0, vanish_duration)
 
 	# 【修正】Tweenのfinishedを待たず、必ず時間で復帰する。これによりcrが消えてもここでハングしない。
-	print("[SlowTrace] vanish タイマー待機前 has_valid_cr=", has_valid_cr, " t=", Time.get_ticks_msec())
 	await get_tree().create_timer(vanish_duration).timeout
-	print("[SlowTrace] vanish タイマー待機後 t=", Time.get_ticks_msec())
 
 	# 5. 演出完了後、時間停止を解除（何があっても必ずここに到達する）
-	print("[SlowTrace] play_line_vanish_and_flash 正常終了→OFF要求 t=", Time.get_ticks_msec())
-	print("[Debug Effect] 演出終了: スローモーション OFF を要求します")
 	slow_motion_requested.emit(false)
 
 

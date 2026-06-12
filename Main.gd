@@ -26,12 +26,6 @@ var time_label: Label
 
 
 func _ready() -> void:
-	# --- 設定値のデバッグログ出力 ---
-	var settings: GameSettings = preload("res://game_settings.tres")
-	if settings and settings.has_method("print_all_settings"):
-		settings.print_all_settings()
-	# --------------------------------
-
 	board = get_node_or_null(board_path) as Board
 	effect_manager = get_node_or_null(effect_manager_path) as EffectManager
 	audio_manager = get_node_or_null(audio_manager_path) as AudioManager
@@ -47,6 +41,9 @@ func _ready() -> void:
 	# ゲーム本編開始：BGMをループ再生する
 	if is_instance_valid(audio_manager):
 		audio_manager.play_bgm()
+
+	# メニューのサウンドボタンへ現在のミュート状態を反映する
+	_update_mute_button_text()
 
 	_spawn_tetromino()
 
@@ -121,7 +118,7 @@ func _process(delta: float) -> void:
 			_time_remaining = max(0.0, _time_remaining - delta)
 			_update_time_label()
 			if _time_remaining <= 0.0:
-				game_over()
+				game_over(true) # 制限時間切れは「TIME UP」表示にする
 				return
 
 	if is_instance_valid(board) and board.has_method("check_deadline_exceeded"):
@@ -221,8 +218,14 @@ func load_preset_board(preset_matrix: Array) -> void:
 	_spawn_tetromino()
 
 
-func game_over() -> void:
+# is_time_up: タイムアタックの制限時間切れによる終了なら true（リザルトの見出しを変える）
+func game_over(is_time_up: bool = false) -> void:
 	if _is_busy: return
+	# デバッグ無敵化：ゲームオーバー処理自体を行わない（デッドライン・時間切れ両経路をここで一括バイパス）。
+	# 危険警告タイマーが溜まりっぱなしにならないよう、ついでにリセットしておく。
+	if is_instance_valid(game_settings) and game_settings.get("debug_invincible") == true:
+		game_over_timer = 0.0
+		return
 	_is_busy = true
 	
 	# --- ゲームの完全停止 ---
@@ -256,12 +259,12 @@ func game_over() -> void:
 			
 	SaveManager.update_score(final_score, max_chain)
 	
-	# リザルトUIの表示（存在する場合）
+	# リザルトUIの表示（存在する場合）。ハイスコアは現在のモードの記録を参照する
 	var result_ui = get_node_or_null("ResultUI")
 	if is_instance_valid(result_ui):
 		result_ui.show()
 		if result_ui.has_method("show_result"):
-			result_ui.show_result(final_score, max_chain, SaveManager.high_score)
+			result_ui.show_result(final_score, max_chain, SaveManager.get_high_score(), is_time_up)
 
 func toggle_menu() -> void:
 	# ゲームオーバー中はメニュー操作でポーズ状態を解除しないようにする
@@ -278,6 +281,18 @@ func toggle_menu() -> void:
 	if is_instance_valid(board):
 		board.process_mode = Node.PROCESS_MODE_PAUSABLE if opening else Node.PROCESS_MODE_ALWAYS
 	get_tree().paused = opening
+
+
+# メニューのサウンドボタンから接続。Masterバスのミュートを切り替えて保存する
+func toggle_mute() -> void:
+	SaveManager.toggle_mute()
+	_update_mute_button_text()
+
+
+func _update_mute_button_text() -> void:
+	var btn = get_node_or_null("MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_Mute") as Button
+	if is_instance_valid(btn):
+		btn.text = "SOUND: OFF" if SaveManager.is_muted else "SOUND: ON"
 
 
 func retry_game() -> void:

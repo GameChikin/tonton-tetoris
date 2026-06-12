@@ -13,6 +13,26 @@ script = ExtResource("1_y7k74")
 endless_button_path = NodePath("Button_Endless")
 timeattack_button_path = NodePath("Button_TimeAttack")
 high_score_label_path = NodePath("Score")
+mute_button_path = NodePath("Button_Mute")
+
+[node name="GameTitle" type="Label" parent="." unique_id=1985170255]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -360.0
+offset_top = -330.0
+offset_right = 360.0
+offset_bottom = -230.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_font_sizes/font_size = 64
+text = "tontonTetoris"
+horizontal_alignment = 1
+vertical_alignment = 1
 
 [node name="Button_Endless" type="Button" parent="." unique_id=1036909532]
 layout_mode = 1
@@ -53,11 +73,50 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -200.0
-offset_top = 150.0
-offset_right = 200.0
-offset_bottom = 190.0
+offset_left = -300.0
+offset_top = 130.0
+offset_right = 300.0
+offset_bottom = 170.0
 grow_horizontal = 2
 grow_vertical = 2
 text = "High Score"
 horizontal_alignment = 1
+
+[node name="HowTo" type="Label" parent="." unique_id=2116754710]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -320.0
+offset_top = 195.0
+offset_right = 320.0
+offset_bottom = 345.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.85, 0.85, 0.85, 1)
+theme_override_font_sizes/font_size = 20
+text = "HOW TO PLAY
+DRAG blocks : same colors snap together
+Connect 4 or more to clear & chain
+GRAB the handle to shake the board
+HOLD SPACE to drop blocks faster"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Button_Mute" type="Button" parent="." unique_id=2116754711]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -110.0
+offset_top = 370.0
+offset_right = 110.0
+offset_bottom = 425.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_font_sizes/font_size = 24
+text = "SOUND: ON"

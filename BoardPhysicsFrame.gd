@@ -28,9 +28,6 @@ var _drag_offset: Vector2 = Vector2.ZERO
 var _frame_vel_smooth: Vector2 = Vector2.ZERO
 var _prev_frame_speed: float = 0.0
 
-# [FollowDebug] 追従ログの間引き用アキュムレータ（切り分け後に削除予定）
-var _follow_dbg_accum: float = 0.0
-
 
 func _ready() -> void:
 	input_pickable = false
@@ -109,8 +106,6 @@ func _drag_inner_blocks(frame_velocity: Vector2, delta: float) -> void:
 	var board: Node = get_parent()
 	if board == null:
 		return
-	var carried: int = 0
-	var tossed: int = 0
 	if is_carrying:
 		var lerp_t: float = clampf(strength * delta, 0.0, 1.0)
 		var dir: Vector2 = frame_velocity / frame_speed
@@ -128,7 +123,6 @@ func _drag_inner_blocks(frame_velocity: Vector2, delta: float) -> void:
 			# 掴み直して逆向きの勢いで上書きしてしまい、飛ばずに連れ戻される。
 			# 壁・重力で向きが戻って枠と同方向になれば（=着地）再び運ぶ対象に戻る。
 			if tet.linear_velocity.dot(dir) < 0.0:
-				tossed += 1
 				continue
 			tet.sleeping = false
 			# 運ぶ向き（枠の進行方向）成分だけ加速し、枠より速い分にはブレーキをかけない。
@@ -136,13 +130,6 @@ func _drag_inner_blocks(frame_velocity: Vector2, delta: float) -> void:
 			var along: float = rel.dot(dir)  # 枠の進行方向に対し、まだ追いついていない分(正)だけ運ぶ
 			if along > 0.0:
 				tet.apply_central_impulse(dir * along * lerp_t * tet.mass)
-			carried += 1
-
-	# [FollowDebug] 効いているか切り分けるための一時ログ（0.3秒間隔で間引き）
-	_follow_dbg_accum += delta
-	if _follow_dbg_accum >= 0.3:
-		_follow_dbg_accum = 0.0
-		print("[FollowDebug] speed=", roundf(frame_speed), " carry=", is_carrying, " 運び中=", carried, " 舞い中=", tossed)
 
 
 # 見える内容（盤面＋取っ手）の外接矩形を、枠原点(global_position)からの相対座標で返す
