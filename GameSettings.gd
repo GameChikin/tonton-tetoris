@@ -46,6 +46,14 @@ class_name GameSettings
 @export var min_spawn_interval: float = 1.0
 ## スペースキー（早送り）を押している間の生成間隔（秒）です。
 @export var fast_forward_spawn_interval: float = 0.15
+## プレイヤーのブロックが出現する位置の、枠（盤面）中心を基準とした横オフセット（ピクセル）です。
+## 0で枠の基準点と同じX、プラスで右、マイナスで左にずれます。盤面中心に出したいときの目安は160前後。
+## 枠をドラッグで動かすと出現位置もそれに追従します（AIのdrop_center_offsetと同じ枠基準）。
+@export var spawn_center_offset_x: float = 160.0
+## プレイヤーのブロックが出現する位置の、枠（盤面）基準点からの縦オフセット（ピクセル）です。
+## 0で枠の基準点と同じY、プラスで下、マイナスで上にずれます。盤面上部から落としたいときに調整してください。
+## X同様、枠をドラッグで動かすと出現位置も追従します。
+@export var spawn_center_offset_y: float = 0.0
 
 @export_group("Tetromino Physics & Snap")
 ## ブロックが空中で正しい角度（90度単位）に自動補正されようとする力の強さです。
@@ -152,7 +160,9 @@ func print_all_settings() -> void:
 	print("line_clear_hold_time: ", line_clear_hold_time)
 	print("board_width_px: ", board_width_px)
 	print("max_frame_drag_speed: ", max_frame_drag_speed)
-	
+	print("[Spawn Settings]")
+	print("spawn_center_offset_x: ", spawn_center_offset_x)
+	print("spawn_center_offset_y: ", spawn_center_offset_y)
 	print("[Tetromino Physics & Snap]")
 	print("snap_rotation_strength: ", snap_rotation_strength)
 	print("snap_rotation_limit: ", snap_rotation_limit)

@@ -102,8 +102,23 @@ func _spawn_tetromino() -> void:
 
 	# 並列の物理落下システムへ移行：生成後、即座に物理演算を有効化して自由落下（重力とスナップの適用）を開始させる
 	add_child(instance)
+	# 枠（盤面）の基準点を起点に、設定したXYオフセットだけずらした位置から出現させる
+	instance.global_position = _get_spawn_position()
+	active_tetromino = instance
 	if instance.has_method("_lock_to_board"):
 		instance._lock_to_board()
+
+
+# プレイヤーのブロック出現座標を、枠の基準点＋設定オフセット(XY)で算出する（枠ドラッグに追従）
+func _get_spawn_position() -> Vector2:
+	var offset := Vector2(160.0, 0.0)
+	if is_instance_valid(game_settings):
+		offset = Vector2(game_settings.spawn_center_offset_x, game_settings.spawn_center_offset_y)
+	if is_instance_valid(board):
+		var frame = board.get_node_or_null("BoardPhysicsFrame")
+		if is_instance_valid(frame):
+			return frame.global_position + offset
+	return offset
 
 
 func _process(delta: float) -> void:
