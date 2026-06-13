@@ -53,6 +53,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			_is_dragging = false
 
 
+# 外部（Board）から、いま枠が掴まれて動かされている最中かを取得する。
+# ゲームオーバー判定で「枠を振り回してブロックを飛ばし続け、速度除外で耐える」抜け道を
+# ふさぐために参照する（ドラッグ中は速度に関わらずデッドライン越えを危険とみなす）。
+func is_being_dragged() -> bool:
+	return _is_dragging
+
+
 func _physics_process(delta: float) -> void:
 	if _is_dragging:
 		# マウス追従先を、まず可動範囲（枠＋取っ手が画面端からはみ出さない範囲）にクランプする

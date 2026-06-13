@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="tontonTetoris"
+config/name="MagSnap Rush"
 run/main_scene="uid://drqfaiu4ds7hu"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"

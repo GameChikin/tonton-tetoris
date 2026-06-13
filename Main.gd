@@ -16,6 +16,12 @@ var game_settings: GameSettings = preload("res://game_settings.tres")
 var deadline_line: Line2D
 var warning_rect: ColorRect
 var game_over_timer: float = 0.0
+# 連鎖の開始/終了エッジを検出するための、前フレームの連鎖状態。
+var _was_resolving: bool = false
+# 連鎖終了後に判定再開を遅らせる「沈静化（settle）猶予」の残り時間。
+# 連鎖直後はブロックが崩落・バウンドの最中で速度が低く＆上にある瞬間を拾いやすく、
+# それを「積まれている」と誤判定して意図せずゲームオーバーになるのを防ぐ。
+var _chain_settle_timer: float = 0.0
 var _spawn_timer: float = 0.0
 var _survival_time: float = 0.0
 
@@ -158,9 +164,28 @@ func _process(delta: float) -> void:
 		# 理由: ライン上にブロックがある状態で連鎖が起きると、スロー中もタイマーが
 		# 加算され続け「連鎖するだけでゲームオーバー」になってしまうため。
 		# 連鎖中は game_over_timer を加算もリセットもせず保持し、通常速度に戻ってから
-		# 途中の値のまま加算を再開させる。警告色も更新しないことで、止まった瞬間の濃さで固定する。
+		# 途中の値のまま加算を再開させる。
 		var is_resolving: bool = board.has_method("is_chain_active") and board.is_chain_active()
-		if not is_resolving:
+
+		# --- 連鎖の開始/終了エッジ処理（無防備な前後の期間をふさぐ）---
+		# 連鎖中は危険タイマーを「ストップ（保持）」する。リセットはしないので、連鎖前に溜まった
+		# 危険度はそのまま引き継がれ、連鎖明けに途中の値から加算を再開する。
+		if _was_resolving and not is_resolving:
+			# 連鎖終了: 崩落のバウンドが収まるまで判定再開を遅らせる settle 猶予を仕込む。
+			var settle_time = 0.6
+			if is_instance_valid(game_settings) and game_settings.get("game_over_chain_settle_time") != null:
+				settle_time = game_settings.get("game_over_chain_settle_time")
+			_chain_settle_timer = settle_time
+		_was_resolving = is_resolving
+
+		# settle 猶予の消化（連鎖が終わってから一定時間カウントダウン）。
+		if _chain_settle_timer > 0.0:
+			_chain_settle_timer = max(0.0, _chain_settle_timer - delta)
+
+		# 連鎖中・settle中はデッドライン判定を凍結する（加算もリセットもしない）。
+		# 警告色も更新しないことで、止まった瞬間の濃さで固定する。
+		var judging_frozen: bool = is_resolving or _chain_settle_timer > 0.0
+		if not judging_frozen:
 			if board.check_deadline_exceeded(current_deadline_y):
 				game_over_timer += delta
 				if is_instance_valid(warning_rect):
@@ -280,6 +305,16 @@ func game_over(is_time_up: bool = false) -> void:
 		result_ui.show()
 		if result_ui.has_method("show_result"):
 			result_ui.show_result(final_score, max_chain, SaveManager.get_high_score(), is_time_up)
+
+# メニューのHELPボタンから呼ばれる。操作チュートリアルを開く。
+# メニューを開いた時点で get_tree().paused=true かつ Board は PAUSABLE になっているため、
+# 背景は止まったまま。TutorialUI は process_mode=ALWAYS なのでポーズ中も動作する。
+# 閉じた後はメニューが背後に残るので、プレイヤーはそのままメニュー操作へ戻れる。
+func open_help() -> void:
+	var tutorial = get_node_or_null("TutorialUI")
+	if is_instance_valid(tutorial) and tutorial.has_method("open"):
+		tutorial.open()
+
 
 func toggle_menu() -> void:
 	# ゲームオーバー中はメニュー操作でポーズ状態を解除しないようにする

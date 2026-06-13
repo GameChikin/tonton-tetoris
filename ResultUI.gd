@@ -6,7 +6,8 @@ extends CanvasLayer
 # 各ラベルへの参照。シーン内の子ノードなので @onready + 生存チェックで安全に取得する。
 @onready var _title_label: Label = get_node_or_null("Window/Margin/VBox/TitleLabel")
 @onready var _score_label: Label = get_node_or_null("Window/Margin/VBox/ScoreLabel")
-@onready var _high_score_label: Label = get_node_or_null("Window/Margin/VBox/HighScoreLabel")
+# ハイスコアは数字だけ黄色にするため RichTextLabel（BBCode）で表示する。
+@onready var _high_score_label: RichTextLabel = get_node_or_null("Window/Margin/VBox/HighScoreLabel")
 
 
 ## リザルト内容を反映してウィンドウを表示する。
@@ -18,5 +19,6 @@ func show_result(score: int, _max_chain: int, high_score: int, is_time_up: bool 
 	if is_instance_valid(_score_label):
 		_score_label.text = "SCORE  %d" % score
 	if is_instance_valid(_high_score_label):
-		_high_score_label.text = "HI-SCORE  %d" % high_score
+		# 数字部分だけ黄色（タイトルのハイスコア表示と同じビビッドな黄色）にする。
+		_high_score_label.text = "[center]HI-SCORE  [color=#fefb00]%d[/color][/center]" % high_score
 	visible = true

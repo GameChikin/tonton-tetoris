@@ -81,7 +81,7 @@ SaveManager  ← Autoload（プロジェクト唯一のシングルトン）
 2. **ノードに触る前に必ず生存確認する。** 物理オブジェクトは非同期に消える：
    ```gdscript
    if is_instance_valid(node) and not node.is_queued_for_deletion():
-       ...
+	   ...
    ```
    特に `await` をまたいだ後は、再度 `is_instance_valid()` でチェックし直す（既存コードはこれを徹底している）。
 3. **`await` の前に必要な座標等をローカル変数へキャッシュする。** アニメーション完了前に対象が消える前提で書く（`Board._execute_docking` の `snap_effect_pos` キャッシュが手本）。
@@ -89,7 +89,7 @@ SaveManager  ← Autoload（プロジェクト唯一のシングルトン）
 5. **メソッド/プロパティの存在も確認してから呼ぶ。** 動的に種類が変わるノードを跨ぐため `has_method()` / `has_signal()` / `"prop" in node` を多用する：
    ```gdscript
    if board.has_method("request_docking"):
-       board.request_docking(self)
+	   board.request_docking(self)
    ```
 
 ---

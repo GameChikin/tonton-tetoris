@@ -13,10 +13,15 @@ extends Control
 @export var resolution_dropdown_path: NodePath
 ## OPTIONウィンドウを閉じるボタンへのパスです。
 @export var option_close_button_path: NodePath
+## 操作チュートリアル（ビジュアル説明）を開くHELPボタンへのパスです。
+@export var help_button_path: NodePath
+## チュートリアル本体（TutorialUI）へのパスです。
+@export var tutorial_path: NodePath
 
 var _mute_btn: Button
 var _option_panel: Control
 var _resolution_dropdown: OptionButton
+var _tutorial: TutorialUI
 
 
 func _ready() -> void:
@@ -28,10 +33,12 @@ func _ready() -> void:
 	if is_instance_valid(timeattack_btn):
 		timeattack_btn.pressed.connect(_on_timeattack_pressed)
 
-	# モード別ハイスコアを並記する（エンドレスとタイムアタックは別記録）
-	var lbl = get_node_or_null(high_score_label_path) as Label
+	# モード別ハイスコアを並記する（エンドレスとタイムアタックは別記録）。
+	# 数字部分だけ黄色にするため、Label ではなく RichTextLabel + BBCode で表示する。
+	# 黄色は実プレイ中のスコア表示（ScoreLabel）と同じビビッドな黄色に揃える。
+	var lbl = get_node_or_null(high_score_label_path) as RichTextLabel
 	if is_instance_valid(lbl):
-		lbl.text = "HIGH SCORE   ENDLESS: %d   /   TIME ATTACK: %d" % [
+		lbl.text = "[center]HIGH SCORE   ENDLESS: [color=#fefb00]%d[/color]   /   TIME ATTACK: [color=#fefb00]%d[/color][/center]" % [
 			SaveManager.high_score_endless, SaveManager.high_score_time_attack
 		]
 
@@ -52,6 +59,12 @@ func _ready() -> void:
 		close_btn.pressed.connect(_on_option_close_pressed)
 
 	_setup_resolution_dropdown()
+
+	# --- 操作チュートリアル（HELP）---
+	_tutorial = get_node_or_null(tutorial_path) as TutorialUI
+	var help_btn = get_node_or_null(help_button_path) as Button
+	if is_instance_valid(help_btn):
+		help_btn.pressed.connect(_on_help_pressed)
 
 
 # 解像度ドロップダウンへ SaveManager のプリセット一覧を流し込み、保存済みの選択を復元する。
@@ -93,6 +106,11 @@ func _on_option_close_pressed() -> void:
 
 func _on_resolution_selected(index: int) -> void:
 	SaveManager.set_resolution_index(index)
+
+
+func _on_help_pressed() -> void:
+	if is_instance_valid(_tutorial):
+		_tutorial.open()
 
 
 func _on_mute_pressed() -> void:

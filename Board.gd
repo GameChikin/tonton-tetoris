@@ -50,6 +50,8 @@ var _match_stall: Dictionary = {}
 # 結合デッドゾーンログ／連鎖キュー滞留警告のレート制限用タイムスタンプ(ms)
 var _last_dockfail_log_msec: int = 0
 var _last_leak_log_msec: int = 0
+# 手動（ドラッグ）結合の拒否ログのレート制限用タイムスタンプ(ms)
+var _last_player_dockfail_log_msec: int = 0
 
 
 # 調査用フラグの安全な読み出し（キー欠損に強い既存パターンに倣う）
@@ -858,6 +860,30 @@ func _log_dock_deadzone(source_tet: Tetromino, eval: Dictionary) -> void:
 	print("[Debug DockDeadzone] 自動結合不可: 同色最接近=%.1fpx しきい値=%.1fpx reason=%s source=%s" % [d, threshold, str(eval.get("reason")), str(source_tet.name)])
 
 
+# 調査用（show_debug_matching）：手動（ドラッグ）結合が拒否された理由の内訳をログする。
+# 距離内に候補があった（debug_points が空でない）のに結合しなかったケースだけを対象にし、
+# 単に届いていない「Too Far」はノイズとして出さない。
+# 「Size Limit」が並ぶ場合、結合自体は届いているのに max_auto_dock_blocks 超過で
+# 弾かれている＝「くっつかない・精度が悪い」体感の原因がサイズ上限だと確定できる。
+func _log_player_dock_reject(source_tet: Tetromino, eval: Dictionary) -> void:
+	if not _is_match_debug_on():
+		return
+	var points: Array = eval.get("debug_points", [])
+	if points.is_empty():
+		return
+	var now_msec: int = Time.get_ticks_msec()
+	if now_msec - _last_player_dockfail_log_msec < 1000:
+		return
+	_last_player_dockfail_log_msec = now_msec
+	var counts: Dictionary = {}
+	for pt in points:
+		var r: String = str(pt.get("reason", "?"))
+		counts[r] = int(counts.get(r, 0)) + 1
+	var src_n: int = _count_blocks(source_tet)
+	var maxv: int = settings.max_auto_dock_blocks if settings != null else 8
+	print("[Debug PlayerDockReject] 手動結合不可 source=%d個 max=%d 拒否内訳=%s" % [src_n, maxv, str(counts)])
+
+
 func _get_group_key(group: Array) -> String:
 	var ids: Array[int] = []
 	for b in group:
@@ -933,6 +959,9 @@ func request_docking(source_tet: Tetromino) -> bool:
 	var eval = _evaluate_docking(source_tet, true)
 	_debug_info = eval
 
+	# 調査用（show_debug_matching）：手動結合が「届いているのに弾かれた」内訳をログする
+	if not eval.can_dock:
+		_log_player_dock_reject(source_tet, eval)
 
 	if eval.can_dock:
 		# 排他ガード：相手が結合アニメーション中・連鎖ロック中（消去予告中）なら結合しない。
@@ -943,6 +972,11 @@ func request_docking(source_tet: Tetromino) -> bool:
 			return false
 		var physics_frame = get_node_or_null("BoardPhysicsFrame")
 		if physics_frame:
+			# 調査用（show_debug_matching）：どれだけ離れた相手に吸着したかをログする
+			# （drag_docking_distance_threshold が大きすぎると、手元から遠い塊へ「勝手に飛んでいく」体感になる）
+			if _is_match_debug_on():
+				var thr: float = settings.drag_docking_distance_threshold if settings != null else 60.0
+				print("[Debug PlayerDock] 手動結合確定 dist=%.1fpx (しきい値=%.1fpx) over_limit_clear=%s" % [float(eval.dock_dist), thr, str(eval.over_limit_clear)])
 			# ★ eval.target_data と、きっかけになったソース側マッチブロックを渡す
 			return _execute_docking(source_tet, eval.target_tet, eval.source_blocks, eval.target_cells, eval.target_data, physics_frame.global_position, eval.source_match_block)
 	return false
@@ -961,7 +995,8 @@ func _evaluate_docking(source_tet: Tetromino, is_player_dock: bool = false) -> D
 		"clear_cells": [],           # 特例許可時に消える予定の同色連結セル（プレビュー発光用）
 		"reason": "",
 		"debug_points": [],
-		"closest_same_color_dist": INF  # 調査用：同色ペアの最接近距離（デッドゾーン検証）
+		"closest_same_color_dist": INF,  # 調査用：同色ペアの最接近距離（デッドゾーン検証）
+		"dock_dist": -1.0  # 調査用：結合確定したペアの実距離（吸着が遠すぎないかの検証）
 	}
 	
 	# デバッグのため判定を分割して詳細なログを出す
@@ -1120,19 +1155,23 @@ func _evaluate_docking(source_tet: Tetromino, is_player_dock: bool = false) -> D
 			result.debug_points.append({"pos": t_data.pos, "reason": "Overlap"})
 			continue # どの隣接マスに置いても全体のどこかが被ってしまう場合は次点ペアへ
 			
-		# サイズ上限：合体後のブロック数が上限を超えるドッキングは行わない。
-		# 手動ドラッグ・自動結合の双方がこの _evaluate_docking を通るため、際限ない巨大化を防げる。
+		# サイズ上限：既にロック済み（max_auto_dock_blocks 個以上＝鉄枠）の塊が関わる結合は行わない。
+		# 判定は「結合後の合計」ではなく「結合前にどちらかがロック済みか」。未ロックの塊同士なら
+		# 合計が上限を超えても結合でき、超えた瞬間にその塊がロック（鉄枠）化する。
+		# 塊の最大サイズは (上限-1)+ピースサイズ 程度に抑えられるため、肥大化防止の意図は維持される。
+		# これにより「拒否される塊＝鉄枠の塊」が常に一致し、見た目と挙動のズレがなくなる。
+		# 手動ドラッグ・自動結合の双方がこの _evaluate_docking を通る。
 		var max_dock: int = 8
 		if settings != null and settings.get("max_auto_dock_blocks") != null:
 			max_dock = settings.max_auto_dock_blocks
-		# 【救済仕様】上限超過でも、プレイヤーの手動ドラッグで「結合した瞬間に clear_threshold
+		# 【救済仕様】ロック済みの塊でも、プレイヤーの手動ドラッグで「結合した瞬間に clear_threshold
 		# 以上の同色連結が成立＝置けば必ず消える」配置だけは特例で許可する。
-		# 消去で塊は上限以下へ縮むため肥大化防止の意図は保たれ、上限到達塊（鉄枠）にも
+		# 消去で塊は縮むため肥大化防止の意図は保たれ、ロック塊（鉄枠）にも
 		# 「揃えて差し込めば崩せる」という直感的な攻略手段が残る。
-		# 自動結合（is_player_dock=false）には適用しない：プレイヤーの意図しない超過を防ぐ。
+		# 自動結合（is_player_dock=false）には適用しない：プレイヤーの意図しない結合を防ぐ。
 		var over_limit_clear := false
 		var over_limit_clear_cells: Array[Vector2i] = []
-		if source_blocks.size() + _count_blocks(t_data.tet) > max_dock:
+		if source_blocks.size() >= max_dock or _count_blocks(t_data.tet) >= max_dock:
 			if is_player_dock:
 				over_limit_clear_cells = _merged_clear_cells(t_data.tet, t_data.block, t_data.cell, source_blocks, final_target_cells)
 				over_limit_clear = not over_limit_clear_cells.is_empty()
@@ -1156,6 +1195,7 @@ func _evaluate_docking(source_tet: Tetromino, is_player_dock: bool = false) -> D
 		result.source_match_block = s_block  # この同色隣接ペアが結合のきっかけ
 		result.over_limit_clear = over_limit_clear
 		result.clear_cells = over_limit_clear_cells
+		result.dock_dist = match_data.dist  # 調査用：確定ペアの実距離
 		result.reason = "OK (Over-Limit Clear)" if over_limit_clear else "OK"
 		return result
 
@@ -1585,9 +1625,10 @@ func _scan_for_auto_docking() -> void:
 				if target_tet.get("_is_dragging_by_player") or target_tet.get("_is_docking_animating") or target_tet.get("_is_chain_locked"):
 					continue
 					
-				# 【仕様確保】結合後の合計ブロック数が設定値以下になる場合のみ自動結合を許可
-				var total_blocks = child.blocks.size() + target_tet.blocks.size()
-				if total_blocks <= settings.max_auto_dock_blocks:
+				# 【仕様確保】ロック済み（鉄枠）の塊が関わる自動結合は行わない。
+				# 未ロック同士なら合計が上限を超えてもよい（超えた瞬間にロック化する）。
+				# _evaluate_docking 内の判定と同一基準（二重防御）。
+				if not child.is_dock_locked() and not target_tet.is_dock_locked():
 					# アニメーション中の多重処理（クラッシュ原因）を防ぐため、双方に即座に排他ロックをかける
 					child.set("_is_docking_animating", true)
 					target_tet.set("_is_docking_animating", true)
@@ -1765,6 +1806,16 @@ func _apply_dynamic_board_size() -> void:
 
 
 func check_deadline_exceeded(y_threshold: float) -> bool:
+	# 枠（取っ手）を掴んで振り回している間は、速度による除外を無効化する。
+	# 通常は「速度が高い＝まだ積まれていない」として判定対象から外すが、その仕様を逆手に取り、
+	# 枠を揺すってブロックを飛ばし続ければデッドラインを越えていてもゲームオーバーを回避できてしまう
+	# （＝意図しない“枠で耐える”体験）。枠ドラッグ中だけは速度に関わらずライン越えを危険とみなす。
+	var ignore_velocity: bool = false
+	if settings == null or settings.get("game_over_strict_on_frame_drag") != false:
+		var frame := get_node_or_null("BoardPhysicsFrame")
+		if frame != null and frame.has_method("is_being_dragged") and frame.is_being_dragged():
+			ignore_velocity = true
+
 	for child in get_children():
 		if child is Tetromino and child.get("_is_locked"):
 			# プレイヤーが操作中のブロックや、ドッキングアニメーション中のものは除外
@@ -1782,7 +1833,9 @@ func check_deadline_exceeded(y_threshold: float) -> bool:
 				v_threshold = settings.get("game_over_velocity_threshold")
 			var v_len = child.linear_velocity.length()
 			var a_len = abs(child.angular_velocity)
-			if v_len < v_threshold and a_len < (v_threshold * 0.1):
+			var is_settled: bool = v_len < v_threshold and a_len < (v_threshold * 0.1)
+			# 通常は静止（積まれている）ブロックのみ、枠ドラッグ中は速度に関わらず判定対象にする。
+			if ignore_velocity or is_settled:
 				for block in child.get_children():
 					if block is CollisionShape2D and not block.disabled:
 						# Godotでは画面上部に行くほどY座標が小さくなる

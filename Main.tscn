@@ -12,6 +12,7 @@
 [ext_resource type="Script" uid="uid://bkpi8cgk10jyn" path="res://BoardPhysicsFrame.gd" id="9_bframe"]
 [ext_resource type="Script" uid="uid://dpfoqmnsx7v17" path="res://AudioManager.gd" id="10_audio"]
 [ext_resource type="Script" uid="uid://cdyndb4jc5bir" path="res://ResultUI.gd" id="11_result"]
+[ext_resource type="PackedScene" uid="uid://ctutorialuiv2" path="res://TutorialUI.tscn" id="12_tutui"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_lgr22"]
 size = Vector2(32, 700)
@@ -228,12 +229,14 @@ theme_override_font_sizes/font_size = 24
 text = "SCORE  0"
 horizontal_alignment = 1
 
-[node name="HighScoreLabel" type="Label" parent="ResultUI/Window/Margin/VBox" unique_id=1826322164]
+[node name="HighScoreLabel" type="RichTextLabel" parent="ResultUI/Window/Margin/VBox" unique_id=1826322164]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
-theme_override_font_sizes/font_size = 20
+theme_override_font_sizes/normal_font_size = 20
+bbcode_enabled = true
 text = "HI-SCORE  0"
-horizontal_alignment = 1
+fit_content = true
+scroll_active = false
+autowrap_mode = 0
 
 [node name="Spacer" type="Control" parent="ResultUI/Window/Margin/VBox" unique_id=700042565]
 custom_minimum_size = Vector2(0, 8)
@@ -269,7 +272,7 @@ visible = false
 offset_left = 12.0
 offset_top = 80.0
 offset_right = 252.0
-offset_bottom = 280.0
+offset_bottom = 340.0
 
 [node name="MarginContainer" type="MarginContainer" parent="MenuUI/MenuPanel" unique_id=482910554]
 layout_mode = 2
@@ -282,17 +285,23 @@ theme_override_constants/margin_bottom = 8
 layout_mode = 2
 theme_override_constants/separation = 8
 
+[node name="Button_Help" type="Button" parent="MenuUI/MenuPanel/MarginContainer/VBoxContainer" unique_id=482910560]
+layout_mode = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 28
+text = "HELP"
+
 [node name="Button_BackToTitle" type="Button" parent="MenuUI/MenuPanel/MarginContainer/VBoxContainer" unique_id=482910556]
 layout_mode = 2
 focus_mode = 0
 theme_override_font_sizes/font_size = 28
-text = "Title"
+text = "TITLE"
 
 [node name="Button_RetryMenu" type="Button" parent="MenuUI/MenuPanel/MarginContainer/VBoxContainer" unique_id=482910557]
 layout_mode = 2
 focus_mode = 0
 theme_override_font_sizes/font_size = 28
-text = "Retry"
+text = "RETRY"
 
 [node name="Button_Mute" type="Button" parent="MenuUI/MenuPanel/MarginContainer/VBoxContainer" unique_id=482910558]
 layout_mode = 2
@@ -306,9 +315,12 @@ text = "SOUND: ON"
 offset_right = 40.0
 offset_bottom = 40.0
 
+[node name="TutorialUI" parent="." unique_id=482910561 instance=ExtResource("12_tutui")]
+
 [connection signal="pressed" from="ResultUI/Window/Margin/VBox/Button_Retry" to="." method="retry_game"]
 [connection signal="pressed" from="ResultUI/Window/Margin/VBox/Button2" to="." method="go_to_title"]
 [connection signal="pressed" from="MenuUI/HamburgerButton" to="." method="toggle_menu"]
+[connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_Help" to="." method="open_help"]
 [connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_BackToTitle" to="." method="go_to_title"]
 [connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_RetryMenu" to="." method="retry_game"]
 [connection signal="pressed" from="MenuUI/MenuPanel/MarginContainer/VBoxContainer/Button_Mute" to="." method="toggle_mute"]

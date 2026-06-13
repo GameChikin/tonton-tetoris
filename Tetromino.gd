@@ -650,7 +650,9 @@ func _request_visual_redraw() -> void:
 
 
 # ドッキング上限に達して、これ以上どの塊とも結合できない状態か。
-# 上限サイズ(max_auto_dock_blocks)以上の塊は、何かを足すと必ず上限超過になるため結合不可。
+# 上限サイズ(max_auto_dock_blocks)以上の塊はロック（鉄枠）となり、以後の結合は
+# 「置けば即消える」救済特例（手動ドラッグのみ）を除いて拒否される。
+# 未ロックの塊同士は合計が上限を超えても結合でき、超えた瞬間にロック化する。
 func is_dock_locked() -> bool:
 	var maxv: int = 8
 	if is_instance_valid(settings) and settings.get("max_auto_dock_blocks") != null:

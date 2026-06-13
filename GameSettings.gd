@@ -74,7 +74,10 @@ class_name GameSettings
 @export var drag_docking_distance_threshold: float = 60.0
 ## 同色ブロックとしか結合（ドッキング）できないようにするかどうかです。
 @export var require_same_color: bool = true
-## 一度の判定で、同時に自動結合（ドッキング）できるブロックの最大数です。
+## 塊がロック（鉄枠）になるブロック数です。この数以上の塊は、手動ドラッグの
+## 「置けば即消える」特例を除き、それ以上結合できなくなります。
+## 未ロックの塊同士は合計がこの数を超えても結合でき、超えた瞬間にロック化します
+## （塊の最大サイズはおよそ この数-1+ピースサイズ に収まります）。
 @export var max_auto_dock_blocks: int = 4
 ## ドッキング時に、結合先をグリッドへ吸着させ、ブロックを所定位置へ移動させる補間アニメーションの時間（秒）です。
 ## 0にすると瞬間移動（アニメなし）になります。
@@ -105,6 +108,14 @@ class_name GameSettings
 ## デッドライン判定の対象とするブロックの最大速度(px/s)です。これ以下の速度なら「積まれている」とみなし判定対象にします。
 ## 物理ベースで常に微振動するため、ある程度大きい値にしないと揺れた瞬間に判定対象から外れてしまいます。
 @export var game_over_velocity_threshold: float = 120.0
+## 連鎖終了後、デッドライン判定の再開を遅らせる「沈静化（settle）猶予」の秒数です。
+## 連鎖直後はブロックが崩落・バウンドの最中で、速度が低く＆ライン上にある一瞬を誤って拾いがちです。
+## この時間だけ判定を凍結し、物理が落ち着いてから判定を再開することで意図しないゲームオーバーを防ぎます。
+@export var game_over_chain_settle_time: float = 0.6
+## 枠（取っ手）を掴んでドラッグしている間は、速度による除外を無効化してデッドライン越えを厳格に判定するかどうかです。
+## ON にすると「枠を振り回してブロックを飛ばし続け、速度除外で耐える」抜け道をふさぎます。
+## OFF にすると従来通り、ドラッグ中でも高速なブロックは判定対象から外れます（耐えやすくなります）。
+@export var game_over_strict_on_frame_drag: bool = true
 
 @export_group("Time Attack")
 ## タイムアタックモードの制限時間（秒）です。0になった瞬間にゲームオーバーになります。
@@ -147,6 +158,11 @@ class_name GameSettings
 @export_range(0.0, 1.0, 0.05) var block_gloss_strength: float = 0.35
 ## 各ブロック下部の影の濃さ（0.0〜1.0）です。0で影なし。ツヤと合わせてゼリーのような立体感を出します。
 @export_range(0.0, 1.0, 0.05) var block_shade_strength: float = 0.18
+
+@export_group("Tutorial")
+## チュートリアル（HELPで開く操作説明）のループアニメ全体の再生速度です。
+## 1.0が標準。大きいほどデモが速く動き、小さいほどゆっくり丁寧に見えます。
+@export_range(0.2, 3.0, 0.1) var tutorial_anim_speed: float = 1.0
 
 @export_group("Debug")
 ## デバッグ用：盤面テンプレートを選択するボタン（画面左上のパネル）を表示するかどうかです。
@@ -201,6 +217,8 @@ func print_all_settings() -> void:
 	print("game_over_grace_period: ", game_over_grace_period)
 	print("game_over_recovery_rate: ", game_over_recovery_rate)
 	print("game_over_velocity_threshold: ", game_over_velocity_threshold)
+	print("game_over_chain_settle_time: ", game_over_chain_settle_time)
+	print("game_over_strict_on_frame_drag: ", game_over_strict_on_frame_drag)
 	print("[Debug]")
 	print("show_debug_presets: ", show_debug_presets)
 	print("===================================")
