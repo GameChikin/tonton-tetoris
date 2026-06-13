@@ -16,6 +16,18 @@ var max_chain_all_time: int = 0
 ## 保存して次回起動時も維持する（ブラウザ公開時のプレイヤー配慮）。
 var is_muted: bool = false
 
+## ウィンドウ解像度のプリセット一覧（すべて基準解像度 800x900 と同じ 8:9 比率）。
+## タイトル画面 OPTION ウィンドウのドロップダウンの並び順と1対1で対応する。
+const RESOLUTION_PRESETS: Array[Vector2i] = [
+	Vector2i(600, 675),
+	Vector2i(800, 900),
+	Vector2i(1000, 1125),
+	Vector2i(1200, 1350),
+]
+## 選択中の解像度プリセットの添字（既定は 800x900）。保存して次回起動時にも適用する。
+## Web版はブラウザがキャンバスサイズを決めるため使用しない（オプションUI側も非表示にする）。
+var resolution_index: int = 1
+
 
 func _ready() -> void:
 	load_data()
@@ -31,8 +43,11 @@ func load_data() -> void:
 			high_score_time_attack = data.get("high_score_time_attack", 0)
 			max_chain_all_time = data.get("max_chain", 0)
 			is_muted = data.get("is_muted", false)
-	# 起動直後から保存済みのミュート状態を音声バスへ反映する
+			# 範囲外の値（将来プリセットを減らした場合など）は既定値へ丸めて事故を防ぐ
+			resolution_index = clampi(int(data.get("resolution_index", 1)), 0, RESOLUTION_PRESETS.size() - 1)
+	# 起動直後から保存済みのミュート状態・解像度を反映する
 	apply_mute()
+	apply_resolution()
 
 
 func save_data() -> void:
@@ -42,6 +57,7 @@ func save_data() -> void:
 		"high_score_time_attack": high_score_time_attack,
 		"max_chain": max_chain_all_time,
 		"is_muted": is_muted,
+		"resolution_index": resolution_index,
 	}
 	file.store_var(data)
 
@@ -80,3 +96,22 @@ func toggle_mute() -> bool:
 ## 記憶しているミュート状態をMasterバスへ反映する（BGM・SEすべてに効く）
 func apply_mute() -> void:
 	AudioServer.set_bus_mute(AudioServer.get_bus_index("Master"), is_muted)
+
+
+## 解像度プリセットを選択して適用・保存する（タイトルのドロップダウンから呼ばれる）
+func set_resolution_index(index: int) -> void:
+	resolution_index = clampi(index, 0, RESOLUTION_PRESETS.size() - 1)
+	apply_resolution()
+	save_data()
+
+
+## 記憶している解像度プリセットをウィンドウへ反映し、画面中央へ寄せ直す。
+## Web版はブラウザ側がキャンバスサイズを決めるため何もしない。
+func apply_resolution() -> void:
+	if OS.has_feature("web"):
+		return
+	var window: Window = get_window()
+	if window == null:
+		return
+	window.size = RESOLUTION_PRESETS[resolution_index]
+	window.move_to_center()

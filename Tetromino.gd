@@ -95,12 +95,24 @@ var _default_gravity_scale: float = 1.0
 var _default_linear_damp: float = 0.0
 var _default_angular_damp: float = 0.0
 
+# 境界線・外周線・ツヤを描く専用オーバーレイ。
+# 親(Tetromino)の _draw はブロックの塗り(ColorRect)より下に描画されて隠れてしまうため、
+# z_index を上げた子ノードへ描画して、常に塗りの上に線が乗るようにする。
+var _outline_overlay: Node2D = null
+
 
 func _ready() -> void:
 	# 初期状態の物理パラメータを記憶
 	_default_gravity_scale = gravity_scale
 	_default_linear_damp = linear_damp
 	_default_angular_damp = angular_damp
+
+	# 描画専用オーバーレイを生成（CollisionShape2Dではないため、ブロック管理・分裂判定には干渉しない）
+	_outline_overlay = Node2D.new()
+	_outline_overlay.name = "OutlineOverlay"
+	_outline_overlay.z_index = 1
+	add_child(_outline_overlay)
+	_outline_overlay.draw.connect(_on_overlay_draw)
 
 	board = get_node_or_null(board_path) as Board
 	pivot = initial_pivot
@@ -534,7 +546,7 @@ func _rebuild_internal_arrays() -> void:
 
 	# 構成変化（結合・分裂・消去）を外周線へ即座に反映する。
 	# _process は眠っている間スキップするため、ここで明示的に再描画を要求する。
-	queue_redraw()
+	_request_visual_redraw()
 
 
 # ブロックが消去や奪取によって自身から離れる直前に呼ばれる
@@ -628,10 +640,15 @@ func _detach_group(sub_group: Array) -> void:
 func _process(_delta: float) -> void:
 	if sleeping and not _is_docking_animating and not _is_dragging_by_player:
 		return
-	queue_redraw()
+	_request_visual_redraw()
 
 
-# ブロックの境界線と塊の外周を描画する
+# オーバーレイへ再描画を要求する（破棄タイミング差に備えて生存確認付き）
+func _request_visual_redraw() -> void:
+	if is_instance_valid(_outline_overlay):
+		_outline_overlay.queue_redraw()
+
+
 # ドッキング上限に達して、これ以上どの塊とも結合できない状態か。
 # 上限サイズ(max_auto_dock_blocks)以上の塊は、何かを足すと必ず上限超過になるため結合不可。
 func is_dock_locked() -> bool:
@@ -641,50 +658,95 @@ func is_dock_locked() -> bool:
 	return blocks.size() >= maxv
 
 
-func _draw() -> void:
+# ブロックのツヤ・境界線・塊の外周をオーバーレイへ描画する
+# （ブロックの塗りの上に乗せるため、自身の _draw ではなく OutlineOverlay の draw シグナルで描く）
+func _on_overlay_draw() -> void:
+	if not is_instance_valid(_outline_overlay):
+		return
 	if blocks.is_empty() or local_cells.is_empty():
 		return
 
-	var cell_size = 32.0
-	var half_size = cell_size / 2.0
-	var thin_line_color = Color(1.0, 1.0, 1.0, 0.3) # 個別の細い線（半透明の白）
-	var thick_line_color = Color(1.0, 1.0, 1.0, 0.9) # 塊の外周の太い線（はっきりした白）
-	var thick_width = 3.0
-	var thin_width = 1.0
+	var cell_size: float = 32.0
+	var half_size: float = cell_size / 2.0
+
+	# --- 設定値の読み出し（キー欠損に強い get + フォールバック） ---
+	var inner_width: float = float(settings.get("block_inner_line_width")) if settings.get("block_inner_line_width") != null else 2.0
+	var inner_color: Color = settings.get("block_inner_line_color") if settings.get("block_inner_line_color") != null else Color(0.0, 0.0, 0.0, 0.45)
+	var outline_width: float = float(settings.get("block_outline_width")) if settings.get("block_outline_width") != null else 4.0
+	var outline_color: Color = settings.get("block_outline_color") if settings.get("block_outline_color") != null else Color(0.05, 0.05, 0.08, 0.95)
+	var gloss_alpha: float = float(settings.get("block_gloss_strength")) if settings.get("block_gloss_strength") != null else 0.35
+	var shade_alpha: float = float(settings.get("block_shade_strength")) if settings.get("block_shade_strength") != null else 0.18
 
 	# ドッキング上限に達した塊は、これ以上結合できないことを示すため外周を鉄（メタリック）調にする。
 	# 色IDは保持されるので、色を揃えれば従来どおり消去できる。
 	if is_dock_locked():
-		thin_line_color = Color(0.55, 0.58, 0.62, 0.5)   # 鉄っぽいグレーの細線
-		thick_line_color = Color(0.78, 0.81, 0.85, 1.0)  # 明るい鋼色の太線
-		thick_width = 6.0
+		inner_color = Color(0.55, 0.58, 0.62, 0.5)    # 鉄っぽいグレーの区切り線
+		outline_color = Color(0.78, 0.81, 0.85, 1.0)  # 明るい鋼色の太線
+		outline_width = 6.0
 
-	# 1. 各ブロックの細い境界線を描画
-	for block in blocks:
-		if is_instance_valid(block):
-			var rect = Rect2(block.position - Vector2(half_size, half_size), Vector2(cell_size, cell_size))
-			draw_rect(rect, thin_line_color, false, thin_width)
+	var count: int = min(blocks.size(), local_cells.size())
 
-	# 2. 塊全体の外周（太い線）を描画（隣接マスがない辺のみ線を引く）
-	var adjacent_edges = [
+	# 1. 各ブロックのツヤ（上部ハイライト）と影（下部シェード）でゼリーのような立体感を出す
+	for i in range(count):
+		var block: Node = blocks[i]
+		if not (block is Node2D) or not is_instance_valid(block):
+			continue
+		var pos: Vector2 = (block as Node2D).position
+		if gloss_alpha > 0.0:
+			var gloss_rect := Rect2(pos + Vector2(-half_size + 3.0, -half_size + 3.0), Vector2(cell_size - 6.0, 7.0))
+			_outline_overlay.draw_rect(gloss_rect, Color(1.0, 1.0, 1.0, gloss_alpha), true)
+		if shade_alpha > 0.0:
+			var shade_rect := Rect2(pos + Vector2(-half_size + 3.0, half_size - 7.0), Vector2(cell_size - 6.0, 4.0))
+			_outline_overlay.draw_rect(shade_rect, Color(0.0, 0.0, 0.0, shade_alpha), true)
+
+	# 2. ブロック同士の境界線（塊の内部で隣り合う辺だけに黒線を引く）
+	#    右隣・下隣のみ調べることで、同じ境界を二重に描かない
+	var inner_dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1)]
+	if inner_width > 0.0:
+		for i in range(count):
+			var block: Node = blocks[i]
+			if not (block is Node2D) or not is_instance_valid(block):
+				continue
+			var pos: Vector2 = (block as Node2D).position
+			var cell: Vector2i = local_cells[i]
+			for dir in inner_dirs:
+				if local_cells.has(cell + dir):
+					var p1: Vector2
+					var p2: Vector2
+					if dir.x == 1: # 右隣と接する縦の境界線
+						p1 = pos + Vector2(half_size, -half_size)
+						p2 = pos + Vector2(half_size, half_size)
+					else: # 下隣と接する横の境界線
+						p1 = pos + Vector2(-half_size, half_size)
+						p2 = pos + Vector2(half_size, half_size)
+					_outline_overlay.draw_line(p1, p2, inner_color, inner_width)
+
+	# 3. 塊全体の外周（太い輪郭線）を描画（隣接マスがない辺のみ線を引く）
+	var adjacent_edges: Array[Dictionary] = [
 		{"dir": Vector2i(0, -1), "p1": Vector2(-half_size, -half_size), "p2": Vector2(half_size, -half_size)}, # 上辺
 		{"dir": Vector2i(0, 1),  "p1": Vector2(-half_size, half_size),  "p2": Vector2(half_size, half_size)},  # 下辺
 		{"dir": Vector2i(-1, 0), "p1": Vector2(-half_size, -half_size), "p2": Vector2(-half_size, half_size)}, # 左辺
 		{"dir": Vector2i(1, 0),  "p1": Vector2(half_size, -half_size),  "p2": Vector2(half_size, half_size)}   # 右辺
 	]
 
-	for i in range(blocks.size()):
-		var block = blocks[i]
-		var cell = local_cells[i]
-		if not is_instance_valid(block): continue
+	for i in range(count):
+		var block: Node = blocks[i]
+		var cell: Vector2i = local_cells[i]
+		if not (block is Node2D) or not is_instance_valid(block):
+			continue
+		var pos: Vector2 = (block as Node2D).position
 
 		for edge in adjacent_edges:
-			var neighbor_cell = cell + edge["dir"]
+			var neighbor_cell: Vector2i = cell + edge["dir"]
 			# 隣のマスに自身のブロックが存在しない場合のみ、その辺は「外周」となる
 			if not local_cells.has(neighbor_cell):
-				var p1 = block.position + edge["p1"]
-				var p2 = block.position + edge["p2"]
-				draw_line(p1, p2, thick_line_color, thick_width)
+				var p1: Vector2 = pos + edge["p1"]
+				var p2: Vector2 = pos + edge["p2"]
+				# 太い線同士の角に切れ目（ノッチ）ができないよう、線の太さの半分だけ両端を延長する
+				var dir_v: Vector2 = (p2 - p1).normalized()
+				p1 -= dir_v * outline_width * 0.5
+				p2 += dir_v * outline_width * 0.5
+				_outline_overlay.draw_line(p1, p2, outline_color, outline_width)
 
 
 # 演出用の疑似スローモーション（泥沼状態）を切り替える

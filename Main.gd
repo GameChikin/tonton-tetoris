@@ -126,15 +126,15 @@ func _process(delta: float) -> void:
 		return
 
 	# --- タイムアタック：制限時間のカウントダウン（0でゲームオーバー）---
+	# 連鎖演出中も凍結せず常にカウントする（凍結すると連鎖の長さで実プレイ時間が変動し、
+	# 「残り時間ギリギリで大連鎖を仕込む」駆け引きも消えてしまうため）。
+	# メニューを開いた時はツリーポーズで Main ごと止まるので、ここでは考慮不要。
 	if _is_time_attack:
-		var ta_resolving: bool = is_instance_valid(board) and board.has_method("is_chain_active") and board.is_chain_active()
-		# 連鎖演出中はデッドライン判定と同様にタイマーも凍結する
-		if not ta_resolving:
-			_time_remaining = max(0.0, _time_remaining - delta)
-			_update_time_label()
-			if _time_remaining <= 0.0:
-				game_over(true) # 制限時間切れは「TIME UP」表示にする
-				return
+		_time_remaining = max(0.0, _time_remaining - delta)
+		_update_time_label()
+		if _time_remaining <= 0.0:
+			game_over(true) # 制限時間切れは「TIME UP」表示にする
+			return
 
 	if is_instance_valid(board) and board.has_method("check_deadline_exceeded"):
 		var threshold_offset = 0.0

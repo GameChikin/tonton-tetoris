@@ -134,6 +134,20 @@ class_name GameSettings
 ## 0 = 追従なし（純粋な物理のみ）。目安: 2.0≒0.5秒で追いつく / 4.0≒0.25秒。
 @export_range(0.0, 20.0, 0.5) var frame_drag_follow_strength: float = 2.0
 
+@export_group("Block Visuals")
+## ブロック同士の境界線（塊の内部の区切り線）の太さ（ピクセル）です。0にすると区切り線を描きません。
+@export var block_inner_line_width: float = 2.0
+## ブロック同士の境界線の色です。半透明の黒にすると、どの色のブロックでも自然になじみます。
+@export var block_inner_line_color: Color = Color(0.0, 0.0, 0.0, 0.45)
+## 塊（結合済みブロックのまとまり）の外周線の太さ（ピクセル）です。太いほど漫画的なくっきりした輪郭になります。
+@export var block_outline_width: float = 4.0
+## 塊の外周線の色です。消去待ちの白発光と見分けがつくよう、黒系を推奨します。
+@export var block_outline_color: Color = Color(0.05, 0.05, 0.08, 0.95)
+## 各ブロック上部のツヤ（白いハイライト）の濃さ（0.0〜1.0）です。0でツヤなし、大きいほどキャンディのような光沢になります。
+@export_range(0.0, 1.0, 0.05) var block_gloss_strength: float = 0.35
+## 各ブロック下部の影の濃さ（0.0〜1.0）です。0で影なし。ツヤと合わせてゼリーのような立体感を出します。
+@export_range(0.0, 1.0, 0.05) var block_shade_strength: float = 0.18
+
 @export_group("Debug")
 ## デバッグ用：盤面テンプレートを選択するボタン（画面左上のパネル）を表示するかどうかです。
 ## リリース時（itch公開など）はオフにしてプレイヤーから隠してください。

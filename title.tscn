@@ -2,6 +2,18 @@
 
 [ext_resource type="Script" uid="uid://p7mijoo080q3" path="res://Title.gd" id="1_y7k74"]
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_option_window"]
+bg_color = Color(0, 0, 0, 0.85)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1, 1, 1, 0.25)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+
 [node name="Title" type="Control" unique_id=1985170254]
 layout_mode = 3
 anchors_preset = 15
@@ -13,7 +25,11 @@ script = ExtResource("1_y7k74")
 endless_button_path = NodePath("Button_Endless")
 timeattack_button_path = NodePath("Button_TimeAttack")
 high_score_label_path = NodePath("Score")
-mute_button_path = NodePath("Button_Mute")
+mute_button_path = NodePath("OptionPanel/Margin/VBox/Button_Mute")
+option_button_path = NodePath("Button_Option")
+option_panel_path = NodePath("OptionPanel")
+resolution_dropdown_path = NodePath("OptionPanel/Margin/VBox/ResolutionRow/ResolutionDropdown")
+option_close_button_path = NodePath("OptionPanel/Margin/VBox/Button_CloseOption")
 
 [node name="GameTitle" type="Label" parent="." unique_id=1985170255]
 layout_mode = 1
@@ -47,6 +63,7 @@ offset_right = 160.0
 offset_bottom = -20.0
 grow_horizontal = 2
 grow_vertical = 2
+focus_mode = 0
 theme_override_font_sizes/font_size = 32
 text = "ENDLESS"
 
@@ -63,6 +80,7 @@ offset_right = 160.0
 offset_bottom = 100.0
 grow_horizontal = 2
 grow_vertical = 2
+focus_mode = 0
 theme_override_font_sizes/font_size = 32
 text = "TIME ATTACK"
 
@@ -105,7 +123,7 @@ HOLD SPACE to drop blocks faster"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="Button_Mute" type="Button" parent="." unique_id=2116754711]
+[node name="Button_Option" type="Button" parent="." unique_id=2116754711]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -118,5 +136,74 @@ offset_right = 110.0
 offset_bottom = 425.0
 grow_horizontal = 2
 grow_vertical = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 24
+text = "OPTION"
+
+[node name="OptionPanel" type="PanelContainer" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -160.0
+offset_right = 200.0
+offset_bottom = 160.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_option_window")
+
+[node name="Margin" type="MarginContainer" parent="OptionPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 24
+
+[node name="VBox" type="VBoxContainer" parent="OptionPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 16
+alignment = 1
+
+[node name="OptionTitle" type="Label" parent="OptionPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_font_sizes/font_size = 32
+text = "OPTION"
+horizontal_alignment = 1
+
+[node name="Button_Mute" type="Button" parent="OptionPanel/Margin/VBox"]
+layout_mode = 2
+focus_mode = 0
 theme_override_font_sizes/font_size = 24
 text = "SOUND: ON"
+
+[node name="ResolutionRow" type="HBoxContainer" parent="OptionPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="ResolutionLabel" type="Label" parent="OptionPanel/Margin/VBox/ResolutionRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "WINDOW SIZE"
+vertical_alignment = 1
+
+[node name="ResolutionDropdown" type="OptionButton" parent="OptionPanel/Margin/VBox/ResolutionRow"]
+custom_minimum_size = Vector2(170, 0)
+layout_mode = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 20
+
+[node name="Spacer" type="Control" parent="OptionPanel/Margin/VBox"]
+custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
+
+[node name="Button_CloseOption" type="Button" parent="OptionPanel/Margin/VBox"]
+layout_mode = 2
+focus_mode = 0
+theme_override_font_sizes/font_size = 24
+text = "CLOSE"

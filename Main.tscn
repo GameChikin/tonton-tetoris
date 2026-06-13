@@ -241,11 +241,13 @@ layout_mode = 2
 
 [node name="Button_Retry" type="Button" parent="ResultUI/Window/Margin/VBox" unique_id=700042560]
 layout_mode = 2
+focus_mode = 0
 theme_override_font_sizes/font_size = 28
 text = "RETRY"
 
 [node name="Button2" type="Button" parent="ResultUI/Window/Margin/VBox" unique_id=256285867]
 layout_mode = 2
+focus_mode = 0
 theme_override_font_sizes/font_size = 28
 text = "TITLE"
 
@@ -258,6 +260,7 @@ offset_left = 12.0
 offset_top = 12.0
 offset_right = 72.0
 offset_bottom = 72.0
+focus_mode = 0
 theme_override_font_sizes/font_size = 40
 text = "≡"
 
@@ -281,16 +284,19 @@ theme_override_constants/separation = 8
 
 [node name="Button_BackToTitle" type="Button" parent="MenuUI/MenuPanel/MarginContainer/VBoxContainer" unique_id=482910556]
 layout_mode = 2
+focus_mode = 0
 theme_override_font_sizes/font_size = 28
 text = "Title"
 
 [node name="Button_RetryMenu" type="Button" parent="MenuUI/MenuPanel/MarginContainer/VBoxContainer" unique_id=482910557]
 layout_mode = 2
+focus_mode = 0
 theme_override_font_sizes/font_size = 28
 text = "Retry"
 
 [node name="Button_Mute" type="Button" parent="MenuUI/MenuPanel/MarginContainer/VBoxContainer" unique_id=482910558]
 layout_mode = 2
+focus_mode = 0
 theme_override_font_sizes/font_size = 28
 text = "SOUND: ON"
 

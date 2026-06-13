@@ -3,10 +3,20 @@ extends Control
 @export var endless_button_path: NodePath
 @export var timeattack_button_path: NodePath
 @export var high_score_label_path: NodePath
-## サウンドのON/OFFを切り替えるボタンへのパスです。
+## サウンドのON/OFFを切り替えるボタンへのパスです（OPTIONウィンドウ内）。
 @export var mute_button_path: NodePath
+## OPTIONウィンドウを開くボタンへのパスです。
+@export var option_button_path: NodePath
+## OPTIONウィンドウ（サウンド・解像度をまとめたパネル）本体へのパスです。
+@export var option_panel_path: NodePath
+## 解像度を選択するドロップダウン（OptionButton）へのパスです。
+@export var resolution_dropdown_path: NodePath
+## OPTIONウィンドウを閉じるボタンへのパスです。
+@export var option_close_button_path: NodePath
 
 var _mute_btn: Button
+var _option_panel: Control
+var _resolution_dropdown: OptionButton
 
 
 func _ready() -> void:
@@ -30,6 +40,36 @@ func _ready() -> void:
 		_mute_btn.pressed.connect(_on_mute_pressed)
 		_update_mute_label()
 
+	# --- OPTIONウィンドウ（サウンド＋解像度）---
+	_option_panel = get_node_or_null(option_panel_path) as Control
+
+	var option_btn = get_node_or_null(option_button_path) as Button
+	if is_instance_valid(option_btn):
+		option_btn.pressed.connect(_on_option_pressed)
+
+	var close_btn = get_node_or_null(option_close_button_path) as Button
+	if is_instance_valid(close_btn):
+		close_btn.pressed.connect(_on_option_close_pressed)
+
+	_setup_resolution_dropdown()
+
+
+# 解像度ドロップダウンへ SaveManager のプリセット一覧を流し込み、保存済みの選択を復元する。
+# Web版はブラウザがキャンバスサイズを決めるため変更できず、誤解を防ぐために行ごと非表示にする。
+func _setup_resolution_dropdown() -> void:
+	_resolution_dropdown = get_node_or_null(resolution_dropdown_path) as OptionButton
+	if not is_instance_valid(_resolution_dropdown):
+		return
+	if OS.has_feature("web"):
+		var row := _resolution_dropdown.get_parent() as Control
+		if is_instance_valid(row):
+			row.visible = false
+		return
+	for preset: Vector2i in SaveManager.RESOLUTION_PRESETS:
+		_resolution_dropdown.add_item("%d x %d" % [preset.x, preset.y])
+	_resolution_dropdown.select(SaveManager.resolution_index)
+	_resolution_dropdown.item_selected.connect(_on_resolution_selected)
+
 
 func _on_endless_pressed() -> void:
 	SaveManager.selected_mode = SaveManager.GameMode.ENDLESS
@@ -39,6 +79,20 @@ func _on_endless_pressed() -> void:
 func _on_timeattack_pressed() -> void:
 	SaveManager.selected_mode = SaveManager.GameMode.TIME_ATTACK
 	get_tree().change_scene_to_file("res://Main.tscn")
+
+
+func _on_option_pressed() -> void:
+	if is_instance_valid(_option_panel):
+		_option_panel.visible = true
+
+
+func _on_option_close_pressed() -> void:
+	if is_instance_valid(_option_panel):
+		_option_panel.visible = false
+
+
+func _on_resolution_selected(index: int) -> void:
+	SaveManager.set_resolution_index(index)
 
 
 func _on_mute_pressed() -> void:

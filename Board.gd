@@ -957,6 +957,8 @@ func _evaluate_docking(source_tet: Tetromino, is_player_dock: bool = false) -> D
 		"source_blocks": [],
 		"target_data": null,
 		"source_match_block": null,  # 判定のきっかけになった「同色隣接ペア」のソース側ブロック
+		"over_limit_clear": false,   # サイズ上限超過だが「結合即消去」が成立するため特例許可した結合か
+		"clear_cells": [],           # 特例許可時に消える予定の同色連結セル（プレビュー発光用）
 		"reason": "",
 		"debug_points": [],
 		"closest_same_color_dist": INF  # 調査用：同色ペアの最接近距離（デッドゾーン検証）
@@ -1123,9 +1125,20 @@ func _evaluate_docking(source_tet: Tetromino, is_player_dock: bool = false) -> D
 		var max_dock: int = 8
 		if settings != null and settings.get("max_auto_dock_blocks") != null:
 			max_dock = settings.max_auto_dock_blocks
+		# 【救済仕様】上限超過でも、プレイヤーの手動ドラッグで「結合した瞬間に clear_threshold
+		# 以上の同色連結が成立＝置けば必ず消える」配置だけは特例で許可する。
+		# 消去で塊は上限以下へ縮むため肥大化防止の意図は保たれ、上限到達塊（鉄枠）にも
+		# 「揃えて差し込めば崩せる」という直感的な攻略手段が残る。
+		# 自動結合（is_player_dock=false）には適用しない：プレイヤーの意図しない超過を防ぐ。
+		var over_limit_clear := false
+		var over_limit_clear_cells: Array[Vector2i] = []
 		if source_blocks.size() + _count_blocks(t_data.tet) > max_dock:
-			result.debug_points.append({"pos": t_data.pos, "reason": "Size Limit"})
-			continue
+			if is_player_dock:
+				over_limit_clear_cells = _merged_clear_cells(t_data.tet, t_data.block, t_data.cell, source_blocks, final_target_cells)
+				over_limit_clear = not over_limit_clear_cells.is_empty()
+			if not over_limit_clear:
+				result.debug_points.append({"pos": t_data.pos, "reason": "Size Limit"})
+				continue
 
 		# 合体後の全ブロック（結合先の既存＋入ってくるソース）の最終セルを検証する。
 		# 結合先を90度スナップ・整列させた結果、傾いた塊の先端などが既存ブロックの
@@ -1141,7 +1154,9 @@ func _evaluate_docking(source_tet: Tetromino, is_player_dock: bool = false) -> D
 		result.source_blocks = source_blocks
 		result.target_data = t_data
 		result.source_match_block = s_block  # この同色隣接ペアが結合のきっかけ
-		result.reason = "OK"
+		result.over_limit_clear = over_limit_clear
+		result.clear_cells = over_limit_clear_cells
+		result.reason = "OK (Over-Limit Clear)" if over_limit_clear else "OK"
 		return result
 
 	if result.reason == "":
@@ -1193,6 +1208,64 @@ func _merged_placement_ok(target_tet: Node, base_block: Node, base_cell: Vector2
 		used[sc] = true
 
 	return true
+
+
+# 【救済仕様の判定】合体後の姿勢（結合先を90度スナップ、_merged_placement_ok と同じ計算）で、
+# ソースブロックを含む同色連結が clear_threshold 以上になるかを調べ、成立する全セルを返す
+# （不成立なら空配列）。グリッド隣接＝実距離ちょうど32pxなので match_connect_distance(36px)
+# に必ず収まり、「ここに置けば必ず消える」を保証できる。
+# 判定は合体後の塊の内部のみで行い、隣の別塊をあてにしない（物理的な隙間や揺れで
+# 実際には発火しない「空約束」を避けるため、確実に消える配置だけを特例許可する）。
+func _merged_clear_cells(target_tet: Node, base_block: Node, base_cell: Vector2i, source_blocks: Array, source_cells: Array) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if not is_instance_valid(target_tet) or not is_instance_valid(base_block):
+		return out
+	var threshold: int = settings.get("clear_threshold") if settings != null and settings.get("clear_threshold") != null else 4
+
+	# 合体後の「セル → 色ID」地図を作る。同一セルへ複数ブロックが畳まれた場合は上書きで1個と
+	# 数える（マッチ判定のスタック統合と同じ、見た目個数ベースの数え方）。
+	var cell_color: Dictionary = {}
+	var rot: float = round(target_tet.rotation / (PI / 2.0)) * (PI / 2.0)
+	for tb in target_tet.get_children():
+		if not (tb is CollisionShape2D) or tb.disabled or not tb.has_meta("color_id"):
+			continue
+		var off: Vector2 = (tb.position - base_block.position).rotated(rot)
+		var cell := base_cell + Vector2i(int(round(off.x / CELL_SIZE)), int(round(off.y / CELL_SIZE)))
+		cell_color[cell] = tb.get_meta("color_id")
+	var pair_count: int = min(source_blocks.size(), source_cells.size())
+	for i in range(pair_count):
+		var sb = source_blocks[i]
+		if is_instance_valid(sb) and sb.has_meta("color_id"):
+			cell_color[source_cells[i]] = sb.get_meta("color_id")
+
+	# 各ソースセルを起点に同色フラッドフィルし、閾値以上の連結があれば採用する。
+	# 起点をソース側に限定することで「この結合が原因で消える」場合だけを特例の対象にする。
+	var dirs := [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]
+	var counted: Dictionary = {}  # 採用済みセル（複数起点からの重複追加防止）
+	for i in range(pair_count):
+		var start: Vector2i = source_cells[i]
+		if counted.has(start) or not cell_color.has(start):
+			continue
+		var color = cell_color[start]
+		var component: Array[Vector2i] = []
+		var visited: Dictionary = {}
+		var stack: Array[Vector2i] = [start]
+		while not stack.is_empty():
+			var c: Vector2i = stack.pop_back()
+			if visited.has(c):
+				continue
+			visited[c] = true
+			component.append(c)
+			for d in dirs:
+				var n: Vector2i = c + d
+				if not visited.has(n) and cell_color.has(n) and cell_color[n] == color:
+					stack.append(n)
+		if component.size() >= threshold:
+			for c in component:
+				if not counted.has(c):
+					counted[c] = true
+					out.append(c)
+	return out
 
 
 func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_blocks: Array, target_cells: Array, target_data: Dictionary, frame_origin: Vector2, match_block: Node = null) -> bool:
@@ -1362,15 +1435,20 @@ func _execute_docking(source_tet: Tetromino, target_tet: Tetromino, source_block
 var _preview_rects: Array[Rect2] = []
 var _preview_fill_color: Color = Color(1.0, 1.0, 1.0, 0.3)
 var _preview_line_color: Color = Color(1.0, 1.0, 1.0, 0.8)
+# 【救済仕様】上限超過の特例ドッキングで消える予定のセル。暖色の発光で「ここに置けば消える」を予告する。
+var _clear_preview_rects: Array[Rect2] = []
+var _clear_preview_fill_color: Color = Color(1.0, 0.92, 0.4, 0.4)
+var _clear_preview_line_color: Color = Color(1.0, 0.85, 0.25, 0.95)
 # デバッグ吸着円を最前面に描くための専用オーバーレイ（枠・ブロックより手前に出す）。_ready で生成。
 var _debug_overlay: Node2D = null
 
 func update_docking_preview(source_tet: Tetromino) -> void:
 	# ドラッグ中のリアルタイムプレビュー。実際の結合(request_docking)と同じ緩め距離で判定する。
 	_preview_rects.clear()
+	_clear_preview_rects.clear()
 	var eval = _evaluate_docking(source_tet, true)
 	_debug_info = eval
-	
+
 	if eval.can_dock:
 		var physics_frame = get_node_or_null("BoardPhysicsFrame")
 		if physics_frame:
@@ -1380,11 +1458,18 @@ func update_docking_preview(source_tet: Tetromino) -> void:
 				var exact_global_pos = frame_origin + Vector2(cell.x * CELL_SIZE, cell.y * CELL_SIZE)
 				var local_draw_pos = to_local(exact_global_pos)
 				_preview_rects.append(Rect2(local_draw_pos - Vector2(half_size, half_size), Vector2(CELL_SIZE, CELL_SIZE)))
-		
+			# 【救済仕様】上限超過の特例ドッキングなら、消える予定の同色連結セルを発光予告する
+			if eval.over_limit_clear:
+				for cell in eval.clear_cells:
+					var exact_global_pos = frame_origin + Vector2(cell.x * CELL_SIZE, cell.y * CELL_SIZE)
+					var local_draw_pos = to_local(exact_global_pos)
+					_clear_preview_rects.append(Rect2(local_draw_pos - Vector2(half_size, half_size), Vector2(CELL_SIZE, CELL_SIZE)))
+
 	queue_redraw()
 
 func clear_docking_preview() -> void:
 	_preview_rects.clear()
+	_clear_preview_rects.clear()
 	_debug_info.clear()
 	queue_redraw()
 
@@ -1393,6 +1478,10 @@ func _draw() -> void:
 	for rect in _preview_rects:
 		draw_rect(rect, _preview_fill_color, true)
 		draw_rect(rect, _preview_line_color, false, 2.0)
+	# 「置けば消える」予告セル（特例ドッキング時のみ）。通常プレビューの上から暖色で重ねる
+	for rect in _clear_preview_rects:
+		draw_rect(rect, _clear_preview_fill_color, true)
+		draw_rect(rect, _clear_preview_line_color, false, 3.0)
 
 
 # デバッグ吸着円・拒否理由を最前面オーバーレイ(_debug_overlay)へ描画する（draw シグナルから呼ばれる）。
