@@ -66,6 +66,11 @@ func _ready() -> void:
 	if is_instance_valid(help_btn):
 		help_btn.pressed.connect(_on_help_pressed)
 
+	# 初回起動時のみ、操作説明を自動で開く（次回以降は HELP ボタンから手動で開く）。
+	if is_instance_valid(_tutorial) and not SaveManager.help_shown:
+		_tutorial.open()
+		SaveManager.mark_help_shown()
+
 
 # 解像度ドロップダウンへ SaveManager のプリセット一覧を流し込み、保存済みの選択を復元する。
 # Web版はブラウザがキャンバスサイズを決めるため変更できず、誤解を防ぐために行ごと非表示にする。

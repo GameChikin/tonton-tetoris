@@ -27,3 +27,11 @@ class_name SoundSettings
 @export var break_pitch_step: float = 0.15
 ## ピッチ上昇が頭打ちになる連鎖数です。これ以上連鎖してもピッチは上がりません（目安: 5）。
 @export_range(1, 20, 1) var break_pitch_max_chain: int = 5
+
+@export_group("Debug")
+## デバッグ用：BGMの再生を有効にするかどうかです。OFFにするとBGMだけを止められます。
+## SE（効果音）には影響しません。リリース時はONに戻してください。
+@export var bgm_enabled: bool = true
+## デバッグ用：SE（効果音＝ドッキング音・ブロック破壊音）の再生を有効にするかどうかです。
+## OFFにするとSEだけを止められます。BGMには影響しません。リリース時はONに戻してください。
+@export var se_enabled: bool = true

@@ -53,6 +53,8 @@ func _create_player(player_name: String) -> AudioStreamPlayer:
 
 ## ゲーム本編の開始時に呼ぶ。BGMをループ再生する。
 func play_bgm() -> void:
+	if sound_settings != null and not sound_settings.bgm_enabled:
+		return
 	if not is_instance_valid(_bgm_player) or _bgm_player.stream == null:
 		return
 	# 二重再生を避ける
@@ -72,6 +74,8 @@ func _on_bgm_finished() -> void:
 
 ## ドッキング（吸着結合）成功時に呼ぶ。
 func play_dock_se() -> void:
+	if sound_settings != null and not sound_settings.se_enabled:
+		return
 	if not is_instance_valid(_dock_player) or _dock_player.stream == null:
 		return
 	_dock_player.play()
@@ -79,6 +83,8 @@ func play_dock_se() -> void:
 
 ## ブロック破壊時に呼ぶ。連鎖数に応じてピッチを上げる（SoundSettings.break_pitch_max_chain で頭打ち）。
 func play_break_se(chain_count: int) -> void:
+	if sound_settings != null and not sound_settings.se_enabled:
+		return
 	if not is_instance_valid(_break_player) or _break_player.stream == null:
 		return
 	var pitch: float = 1.0

@@ -16,6 +16,10 @@ var max_chain_all_time: int = 0
 ## 保存して次回起動時も維持する（ブラウザ公開時のプレイヤー配慮）。
 var is_muted: bool = false
 
+## 操作説明（HELP）を一度でも表示したか。初回起動時のみタイトルで自動表示するための目印。
+## 保存して以降は自動表示しない（HELPボタンからはいつでも開ける）。
+var help_shown: bool = false
+
 ## ウィンドウ解像度のプリセット一覧（すべて基準解像度 800x900 と同じ 8:9 比率）。
 ## タイトル画面 OPTION ウィンドウのドロップダウンの並び順と1対1で対応する。
 const RESOLUTION_PRESETS: Array[Vector2i] = [
@@ -43,6 +47,7 @@ func load_data() -> void:
 			high_score_time_attack = data.get("high_score_time_attack", 0)
 			max_chain_all_time = data.get("max_chain", 0)
 			is_muted = data.get("is_muted", false)
+			help_shown = data.get("help_shown", false)
 			# 範囲外の値（将来プリセットを減らした場合など）は既定値へ丸めて事故を防ぐ
 			resolution_index = clampi(int(data.get("resolution_index", 1)), 0, RESOLUTION_PRESETS.size() - 1)
 	# 起動直後から保存済みのミュート状態・解像度を反映する
@@ -58,6 +63,7 @@ func save_data() -> void:
 		"max_chain": max_chain_all_time,
 		"is_muted": is_muted,
 		"resolution_index": resolution_index,
+		"help_shown": help_shown,
 	}
 	file.store_var(data)
 
@@ -83,6 +89,14 @@ func update_score(current_score: int, current_max_chain: int) -> void:
 
 	if updated:
 		save_data()
+
+
+## HELPを表示済みとして記録・保存する（初回自動表示は一度きりにするため）。
+func mark_help_shown() -> void:
+	if help_shown:
+		return
+	help_shown = true
+	save_data()
 
 
 ## ミュート状態を反転して適用・保存する。切り替え後の状態を返す。
