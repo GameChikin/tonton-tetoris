@@ -351,4 +351,4 @@ func retry_game() -> void:
 
 func go_to_title() -> void:
 	get_tree().paused = false
-	get_tree().change_scene_to_file("res://Title.tscn")
+	get_tree().change_scene_to_file("uid://drqfaiu4ds7hu")

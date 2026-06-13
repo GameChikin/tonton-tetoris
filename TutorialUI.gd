@@ -125,9 +125,10 @@ func _build_ui() -> void:
 	_dots.draw.connect(_on_dots_draw)
 	_card.add_child(_dots)
 
-	# 閉じる（スキップ）ボタン。カード右上の「✕」。
+	# 閉じる（スキップ）ボタン。カード右上の「X」。
+	# ※Web版のフォールバックフォントに含まれない記号（✕ など）は豆腐（□）化するため ASCII を使う。
 	_close_btn = Button.new()
-	_close_btn.text = "✕"
+	_close_btn.text = "X"
 	_close_btn.focus_mode = Control.FOCUS_NONE
 	_close_btn.add_theme_font_size_override("font_size", 28)
 	_close_btn.custom_minimum_size = Vector2(44.0, 44.0)
@@ -136,12 +137,13 @@ func _build_ui() -> void:
 	_card.add_child(_close_btn)
 
 	# ページ送りの ＜ ＞ ボタン。画面端ではなく、カード自身の左右の端（縦中央）に置く。
-	_prev_btn = _make_nav_button("＜")
+	# ※全角記号（＜＞）はWebのフォールバックフォントで豆腐化するため ASCII の < > を使う。
+	_prev_btn = _make_nav_button("<")
 	_prev_btn.position = Vector2(6.0, (CARD_SIZE.y - 48.0) * 0.5)
 	_prev_btn.pressed.connect(_prev)
 	_card.add_child(_prev_btn)
 
-	_next_btn = _make_nav_button("＞")
+	_next_btn = _make_nav_button(">")
 	_next_btn.position = Vector2(CARD_SIZE.x - 54.0, (CARD_SIZE.y - 48.0) * 0.5)
 	_next_btn.pressed.connect(_advance)
 	_card.add_child(_next_btn)
